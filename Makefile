@@ -1,6 +1,6 @@
 .PHONY: deps vendor test build run clean
 
-GO_LOCAL_ENV := GOTOOLCHAIN=local GOMODCACHE=$(PWD)/.cache/gomod GOCACHE=$(PWD)/.cache/gobuild GOPATH=$(PWD)/.cache/gopath
+GO_LOCAL_ENV := GOMODCACHE=$(PWD)/.cache/gomod GOCACHE=$(PWD)/.cache/gobuild GOPATH=$(PWD)/.cache/gopath
 GO_VENDOR_ENV := GOFLAGS=-mod=vendor $(GO_LOCAL_ENV)
 
 bin:
