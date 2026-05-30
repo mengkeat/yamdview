@@ -1,0 +1,15 @@
+# Local build/module caches
+.cache/
+
+# Build outputs
+bin/
+dist/
+.tmp/
+
+# Local-only planning artifact; never commit
+PLAN.md
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
