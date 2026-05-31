@@ -12,6 +12,43 @@ import (
 	"sync"
 )
 
+// ExportView is a named viewport target for standalone export.
+type ExportView string
+
+const (
+	ExportViewPhone   ExportView = "phone"
+	ExportViewTablet  ExportView = "tablet"
+	ExportViewLaptop  ExportView = "laptop"
+	ExportViewDesktop ExportView = "desktop"
+)
+
+// ValidExportView reports whether v is a recognised viewport target.
+func ValidExportView(v string) bool {
+	switch ExportView(v) {
+	case ExportViewPhone, ExportViewTablet, ExportViewLaptop, ExportViewDesktop:
+		return true
+	default:
+		return false
+	}
+}
+
+// exportViewMeasure returns the fixed --measure value for the given viewport.
+// An empty string means "use the responsive default".
+func exportViewMeasure(v ExportView) string {
+	switch v {
+	case ExportViewPhone:
+		return "22rem"
+	case ExportViewTablet:
+		return "40rem"
+	case ExportViewLaptop:
+		return "52rem"
+	case ExportViewDesktop:
+		return "62rem"
+	default:
+		return ""
+	}
+}
+
 // PageData holds the data injected into the HTML template.
 type PageData struct {
 	Title   string
@@ -257,4 +294,25 @@ func RenderPage(assets Assets, data PageData) ([]byte, error) {
 		return nil, fmt.Errorf("execute template: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// ExportStandalone renders a single self-contained HTML document suitable
+// for distribution. When view is non-empty, it injects a CSS override that
+// fixes the content column width for the named target viewport (phone,
+// tablet, laptop, desktop).
+func ExportStandalone(assets Assets, data PageData, view string) (string, error) {
+	if view != "" {
+		if !ValidExportView(view) {
+			return "", fmt.Errorf("unknown --export-view %q (valid: phone, tablet, laptop, desktop)", view)
+		}
+		override := "\n/* yamdview export: fixed viewport */\n:root{--measure:" +
+			exportViewMeasure(ExportView(view)) + " !important}\n"
+		data.CSS = template.CSS(string(data.CSS) + override)
+	}
+
+	b, err := RenderPage(assets, data)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

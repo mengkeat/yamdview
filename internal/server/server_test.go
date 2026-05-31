@@ -249,6 +249,60 @@ func TestServerRejectsInvalidAddr(t *testing.T) {
 	}
 }
 
+func TestValidExportView(t *testing.T) {
+	if server.ValidExportView("phone") != true {
+		t.Error("expected phone to be valid")
+	}
+	if server.ValidExportView("tablet") != true {
+		t.Error("expected tablet to be valid")
+	}
+	if server.ValidExportView("laptop") != true {
+		t.Error("expected laptop to be valid")
+	}
+	if server.ValidExportView("desktop") != true {
+		t.Error("expected desktop to be valid")
+	}
+	if server.ValidExportView("watch") != false {
+		t.Error("expected watch to be invalid")
+	}
+	if server.ValidExportView("") != false {
+		t.Error("expected empty string to be invalid")
+	}
+}
+
+func TestExportStandaloneContainsContent(t *testing.T) {
+	out, err := server.ExportStandalone(testAssets, testPageData("Export", "<p>Exported</p>"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Exported") {
+		t.Error("export missing content")
+	}
+	if !strings.Contains(out, "Export") {
+		t.Error("export missing title")
+	}
+	if !strings.Contains(out, "body { margin: 0; }") {
+		t.Error("export missing CSS")
+	}
+}
+
+func TestExportStandaloneRejectsUnknownView(t *testing.T) {
+	_, err := server.ExportStandalone(testAssets, testPageData("X", "<p>x</p>"), "watch")
+	if err == nil {
+		t.Fatal("expected error for unknown view")
+	}
+}
+
+func TestExportStandaloneInjectsViewportOverride(t *testing.T) {
+	out, err := server.ExportStandalone(testAssets, testPageData("X", "<p>x</p>"), "tablet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "--measure:40rem") {
+		t.Error("export missing tablet viewport override")
+	}
+}
+
 func readSSEBlock(t *testing.T, reader *bufio.Reader) []string {
 	t.Helper()
 
