@@ -135,3 +135,65 @@ func TestParseRejectsNegativeDebounce(t *testing.T) {
 		t.Fatalf("expected negative debounce error, got %v", err)
 	}
 }
+
+func TestParseExportFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]string{"--export", "out.html", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Export != "out.html" {
+		t.Errorf("expected Export %q, got %q", "out.html", cfg.Export)
+	}
+}
+
+func TestParseExportViewFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]string{"--export", "out.html", "--export-view", "tablet", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExportView != "tablet" {
+		t.Errorf("expected ExportView tablet, got %q", cfg.ExportView)
+	}
+}
+
+func TestParseRejectsInvalidExportView(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Parse([]string{"--export-view", "watch", path})
+	if err == nil || !strings.Contains(err.Error(), "unknown --export-view") {
+		t.Fatalf("expected unknown export-view error, got %v", err)
+	}
+}
+
+func TestParseExportViewWithoutExportIsValid(t *testing.T) {
+	// Setting --export-view without --export is allowed; it will simply be ignored.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]string{"--export-view", "desktop", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExportView != "desktop" {
+		t.Errorf("expected ExportView desktop, got %q", cfg.ExportView)
+	}
+}
