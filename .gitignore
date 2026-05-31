@@ -6,6 +6,9 @@ bin/
 dist/
 .tmp/
 
+# Vendor (generated via `make vendor`, not committed)
+vendor/
+
 # Local-only planning artifact; never commit
 PLAN.md
 
