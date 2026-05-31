@@ -1,17 +1,32 @@
 # yamdview
 
-`yamdview` is planned as a command-line Markdown viewer written in Go. It will open a local browser view for a Markdown file, watch the source file for changes, and eventually patch only changed DOM blocks for a smooth live-preview experience.
+`yamdview` is a command-line Markdown viewer written in Go. It renders a Markdown file and opens it in your system browser via a local HTTP server.
 
-The project is currently in phase 0: repository bootstrap and CLI path validation.
+## Current status
 
-## Current usage
+Phase 1 complete: static Markdown to browser view. File watching and live updates arrive in Phase 2.
+
+## Usage
 
 ```sh
 make build
 ./bin/yamdview path/to/file.md
 ```
 
-At this stage the command validates that the Markdown file exists and prints a bootstrap message. Browser rendering and live updates will be added in later phases.
+This opens your default browser showing the rendered Markdown. Use `--no-open` to suppress browser opening:
+
+```sh
+./bin/yamdview --no-open README.md
+```
+
+### Flags
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--addr` | `127.0.0.1:0` | HTTP bind address (port 0 picks a free port) |
+| `--no-open` | `false` | Do not open the system browser automatically |
+
+Press `Ctrl+C` to shut down the server.
 
 ## Development
 
@@ -39,14 +54,13 @@ Local generated files are ignored under `.cache/`, `bin/`, `dist/`, and `.tmp/`.
 
 Planned capabilities include:
 
-- local HTTP browser viewer with automatic browser opening
-- file watching and live browser updates
-- block-level Markdown diffing and DOM patching
-- explicit and Unicode mathematical notation support with local KaTeX assets
-- heuristic repair for malformed Markdown tables
-- optional configurable LLM fallback for math/table repairs
-- safe fix persistence with backup or in-place modes
+- file watching and live browser updates (Phase 2)
+- block-level Markdown diffing and DOM patching (Phase 3)
+- explicit and Unicode mathematical notation support with local KaTeX assets (Phase 4–5)
+- heuristic repair for malformed Markdown tables (Phase 6)
+- optional configurable LLM fallback for math/table repairs (Phase 8)
+- safe fix persistence with backup or in-place modes (Phase 7)
 
 ## Privacy and safety notes
 
-LLM-based repair will be opt-in. Source text should not be sent to any provider unless explicitly enabled or approved by the user.
+LLM-based repair will be opt-in. Source text will not be sent to any provider unless explicitly enabled or approved by the user.
