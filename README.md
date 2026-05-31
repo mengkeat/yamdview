@@ -26,8 +26,27 @@ This opens your default browser showing the rendered Markdown. Saving the source
 | `--addr` | `127.0.0.1:0` | HTTP bind address (port 0 picks a free port) |
 | `--debounce` | `150ms` | File watcher debounce duration |
 | `--no-open` | `false` | Do not open the system browser automatically |
+| `--export` | _(empty)_ | Export a standalone HTML file (CSS/JS inlined) |
+| `--export-view` | _(empty)_ | Viewport target for export: `phone`, `tablet`, `laptop`, `desktop` |
 
-Press `Ctrl+C` to shut down the server.
+### Standalone export
+
+Generate a self-contained HTML file that can be opened directly in any browser without
+running a server:
+
+```sh
+./bin/yamdview --export report.html README.md
+```
+
+Use `--export-view` to fix the content width for a specific reading context:
+
+```sh
+./bin/yamdview --export report.html --export-view tablet README.md
+```
+
+Valid values for `--export-view`: `phone` (~22rem), `tablet` (~40rem), `laptop` (~52rem), `desktop` (~62rem).
+
+Press `Ctrl+C` to shut down the server when running without `--export`.
 
 ## Development
 
