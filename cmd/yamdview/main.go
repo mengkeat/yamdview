@@ -26,6 +26,7 @@ func main() {
 		MarkdownPath: cfg.MarkdownPath,
 		Addr:         cfg.Addr,
 		NoOpen:       cfg.NoOpen,
+		Debounce:     cfg.Debounce,
 	}, assets)
 
 	if err := application.Run(); err != nil {

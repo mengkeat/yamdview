@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 )
 
 var ErrUsage = errors.New("usage: yamdview [flags] file.md")
+
+const DefaultDebounce = 150 * time.Millisecond
 
 type Config struct {
 	MarkdownPath string
 	Addr         string // HTTP bind address (host:port)
 	NoOpen       bool   // suppress automatic browser opening
+	Debounce     time.Duration
 }
 
 func Parse(args []string) (Config, error) {
@@ -22,6 +26,7 @@ func Parse(args []string) (Config, error) {
 
 	addr := flags.String("addr", "127.0.0.1:0", "HTTP bind address")
 	noOpen := flags.Bool("no-open", false, "do not open system browser automatically")
+	debounce := flags.Duration("debounce", DefaultDebounce, "file watcher debounce duration")
 
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
@@ -43,10 +48,14 @@ func Parse(args []string) (Config, error) {
 	if info.IsDir() {
 		return Config{}, fmt.Errorf("markdown path is a directory: %s", path)
 	}
+	if *debounce < 0 {
+		return Config{}, fmt.Errorf("debounce must be non-negative: %s", debounce.String())
+	}
 
 	return Config{
 		MarkdownPath: path,
 		Addr:         *addr,
 		NoOpen:       *noOpen,
+		Debounce:     *debounce,
 	}, nil
 }
