@@ -1,0 +1,50 @@
+# golangci-lint configuration
+# Docs: https://golangci-lint.run/usage/configuration/
+run:
+  go: "1.23"
+  timeout: 3m
+  modules-download-mode: vendor
+
+linters:
+  enable:
+    # Default set (widely useful, low noise)
+    - errcheck       # unchecked errors
+    - gosimple       # simplifications
+    - govet          # go vet
+    - ineffassign    # ineffectual assignments
+    - staticcheck    # static analysis
+    - unused         # unused code
+    # Additional linters
+    - gocritic       # opinionated checks
+    - gocyclo        # cyclomatic complexity
+    - gofumpt        # stricter gofmt
+    - goimports      # import formatting
+    - misspell       # spelling mistakes
+    - nilerr         # nil error returns
+    - prealloc       # slice preallocation
+    - revive         # drop-in golint replacement
+    - tparallel      # parallel test
+    - unconvert      # unnecessary conversions
+    - unparam        # unused parameters
+    - usestdlibvars  # use stdlib constants
+    - wastedassign   # wasted assignments
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+        disabled: false
+  goimports:
+    local-prefixes: github.com/mengkeat/yamdview
+  gofumpt:
+    extra-rules: true
+
+issues:
+  exclude-dirs:
+    - .cache
+    - vendor
+  max-issues-per-linter: 0
+  max-same-issues: 0
