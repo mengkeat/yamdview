@@ -293,13 +293,83 @@ func TestExportStandaloneRejectsUnknownView(t *testing.T) {
 	}
 }
 
-func TestExportStandaloneInjectsViewportOverride(t *testing.T) {
-	out, err := server.ExportStandalone(testAssets, testPageData("X", "<p>x</p>"), "tablet")
+func TestExportStandaloneViewportOverrides(t *testing.T) {
+	tests := []struct {
+		view    string
+		measure string
+	}{
+		{"phone", "22rem"},
+		{"tablet", "40rem"},
+		{"laptop", "52rem"},
+		{"desktop", "62rem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.view, func(t *testing.T) {
+			out, err := server.ExportStandalone(testAssets, testPageData("X", "<p>x</p>"), tt.view)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "--measure:" + tt.measure
+			if !strings.Contains(out, want) {
+				t.Errorf("export for %q missing %q", tt.view, want)
+			}
+			if !strings.Contains(out, "yamdview export") {
+				t.Errorf("export for %q missing override comment", tt.view)
+			}
+		})
+	}
+}
+
+func TestExportStandaloneNoViewportHasNoOverride(t *testing.T) {
+	out, err := server.ExportStandalone(testAssets, testPageData("X", "<p>x</p>"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "--measure:40rem") {
-		t.Error("export missing tablet viewport override")
+	if strings.Contains(out, "yamdview export") {
+		t.Error("export without viewport should not contain override comment")
+	}
+	if strings.Contains(out, "!important") {
+		t.Error("export without viewport should not contain !important")
+	}
+}
+
+func TestExportStandaloneAutoPopulatesCSSAndJS(t *testing.T) {
+	// Pass PageData with empty CSS and JS; ExportStandalone fills them from assets.
+	data := server.PageData{Title: "Auto", Content: "<p>auto</p>"}
+	out, err := server.ExportStandalone(testAssets, data, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "body { margin: 0; }") {
+		t.Error("export did not auto-populate CSS from assets")
+	}
+	// The JS field won't appear because testAssets.IndexHTML lacks {{.JS}},
+	// but the function should not error.
+	if !strings.Contains(out, "auto") {
+		t.Error("export missing content after auto-populate")
+	}
+}
+
+func TestExportStandalonePreservesExplicitCSS(t *testing.T) {
+	// Explicit CSS should be used, not overwritten by assets.
+	data := server.PageData{
+		Title:   "Explicit",
+		Content: "<p>explicit</p>",
+		CSS:     "/* custom css */",
+	}
+	out, err := server.ExportStandalone(testAssets, data, "phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "/* custom css */") {
+		t.Error("export lost explicit CSS")
+	}
+	if !strings.Contains(out, "yamdview export") {
+		t.Error("export missing override comment after explicit CSS")
+	}
+	if !strings.Contains(out, "--measure:22rem") {
+		t.Error("export missing phone viewport override after explicit CSS")
 	}
 }
 

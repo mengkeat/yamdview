@@ -191,3 +191,156 @@ func TestExportWithoutViewport(t *testing.T) {
 		t.Error("exported file should not contain viewport override comment")
 	}
 }
+
+func TestExportAllViewports(t *testing.T) {
+	tests := []struct {
+		view    string
+		measure string
+	}{
+		{"phone", "22rem"},
+		{"tablet", "40rem"},
+		{"laptop", "52rem"},
+		{"desktop", "62rem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.view, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "doc.md")
+			dst := filepath.Join(dir, "out.html")
+
+			if err := os.WriteFile(src, []byte("# "+tt.view+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			application := New(Config{
+				MarkdownPath: src,
+				Export:       dst,
+				ExportView:   tt.view,
+			}, testAssets)
+
+			if err := application.Run(); err != nil {
+				t.Fatal(err)
+			}
+
+			data, err := os.ReadFile(dst)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			out := string(data)
+			if !strings.Contains(out, tt.view) {
+				t.Errorf("export for %q missing content heading", tt.view)
+			}
+			want := "--measure:" + tt.measure
+			if !strings.Contains(out, want) {
+				t.Errorf("export for %q missing measure override %q", tt.view, want)
+			}
+			if !strings.Contains(out, "yamdview export") {
+				t.Errorf("export for %q missing override comment", tt.view)
+			}
+			if !strings.Contains(out, testAssets.ViewerCSS) {
+				t.Errorf("export for %q missing CSS", tt.view)
+			}
+			if !strings.Contains(out, testAssets.ViewerJS) {
+				t.Errorf("export for %q missing JS", tt.view)
+			}
+		})
+	}
+}
+
+func TestExportRejectsUnknownViewInApp(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "out.html")
+
+	if err := os.WriteFile(src, []byte("# Bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+		ExportView:   "watch",
+	}, testAssets)
+
+	err := application.Run()
+	if err == nil {
+		t.Fatal("expected error for unknown view in app export")
+	}
+	if !strings.Contains(err.Error(), "unknown --export-view") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// The output file should not be created.
+	if _, err := os.Stat(dst); err == nil {
+		t.Error("output file should not exist after failed export")
+	}
+}
+
+func TestExportOverwritesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "out.html")
+
+	if err := os.WriteFile(src, []byte("# New\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+	}, testAssets)
+
+	if err := application.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := string(data)
+	if !strings.Contains(out, "New") {
+		t.Error("export did not overwrite existing file")
+	}
+	if strings.Contains(out, "stale") {
+		t.Error("export still contains stale content")
+	}
+}
+
+func TestExportFailsOnUnwritablePath(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "subdir", "out.html") // subdir does not exist
+
+	if err := os.WriteFile(src, []byte("# Bad path\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+	}, testAssets)
+
+	err := application.Run()
+	if err == nil {
+		t.Fatal("expected error for unwritable export path")
+	}
+}
+
+func TestExportWithNonExistentMarkdown(t *testing.T) {
+	application := New(Config{
+		MarkdownPath: "/tmp/does-not-exist-928374.md",
+		Export:       "/tmp/out.html",
+	}, testAssets)
+
+	err := application.Run()
+	if err == nil {
+		t.Fatal("expected error for missing markdown file")
+	}
+}
