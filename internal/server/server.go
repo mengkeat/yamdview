@@ -64,14 +64,21 @@ type Assets struct {
 	ViewerJS  string
 }
 
+// ensureAssets fills empty CSS/JS fields from the provided assets.
+func (pd *PageData) ensureAssets(assets Assets) {
+	if pd.CSS == "" {
+		pd.CSS = template.CSS(assets.ViewerCSS)
+	}
+	if pd.JS == "" {
+		pd.JS = template.JS(assets.ViewerJS)
+	}
+}
+
 // PageDataFromAssets creates a PageData with CSS and JS populated from assets.
 func PageDataFromAssets(assets Assets, title string, content template.HTML) PageData {
-	return PageData{
-		Title:   title,
-		Content: content,
-		CSS:     template.CSS(assets.ViewerCSS),
-		JS:      template.JS(assets.ViewerJS),
-	}
+	pd := PageData{Title: title, Content: content}
+	pd.ensureAssets(assets)
+	return pd
 }
 
 // Server is the local HTTP server for the Markdown viewer.
@@ -108,13 +115,7 @@ func New(addr string, assets Assets, data PageData) (*Server, error) {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
 
-	// Inject assets into page data if not already set.
-	if data.CSS == "" {
-		data.CSS = template.CSS(assets.ViewerCSS)
-	}
-	if data.JS == "" {
-		data.JS = template.JS(assets.ViewerJS)
-	}
+	data.ensureAssets(assets)
 
 	tmpl, err := template.New("index").Parse(assets.IndexHTML)
 	if err != nil {
@@ -277,12 +278,7 @@ func writeSSE(w http.ResponseWriter, event sseEvent) {
 // RenderPage renders the page template to a byte slice using the given assets.
 // This is useful for generating static HTML or for testing.
 func RenderPage(assets Assets, data PageData) ([]byte, error) {
-	if data.CSS == "" {
-		data.CSS = template.CSS(assets.ViewerCSS)
-	}
-	if data.JS == "" {
-		data.JS = template.JS(assets.ViewerJS)
-	}
+	data.ensureAssets(assets)
 
 	tmpl, err := template.New("index").Parse(assets.IndexHTML)
 	if err != nil {
@@ -301,20 +297,16 @@ func RenderPage(assets Assets, data PageData) ([]byte, error) {
 // fixes the content column width for the named target viewport (phone,
 // tablet, laptop, desktop).
 func ExportStandalone(assets Assets, data PageData, view string) (string, error) {
-	// Populate CSS/JS from assets if not already set.
-	if data.CSS == "" {
-		data.CSS = template.CSS(assets.ViewerCSS)
-	}
-	if data.JS == "" {
-		data.JS = template.JS(assets.ViewerJS)
-	}
+	data.ensureAssets(assets)
 
 	if view != "" {
 		if !ValidExportView(view) {
 			return "", fmt.Errorf("unknown --export-view %q (valid: phone, tablet, laptop, desktop)", view)
 		}
-		override := "\n/* yamdview export: fixed viewport */\n:root{--measure:" +
-			exportViewMeasure(ExportView(view)) + " !important}\n"
+		override := fmt.Sprintf(
+			"\n/* yamdview export: fixed viewport */\n:root{--measure:%s !important}\n",
+			exportViewMeasure(ExportView(view)),
+		)
 		data.CSS = template.CSS(string(data.CSS) + override)
 	}
 
