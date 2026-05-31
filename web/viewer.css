@@ -36,9 +36,19 @@
   /* Typography */
   --font-body:    'Crimson Pro', Georgia, 'Times New Roman', serif;
   --font-mono:    'JetBrains Mono', 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  --measure:      38rem;      /* ~75ch at this font size */
-  --font-size:    1.2rem;
+
+  /* Fluid: 1.05rem on phones, 1.2rem on desktop */
+  --font-size:    clamp(1.05rem, 0.9rem + 0.5vw, 1.2rem);
+
+  /* Fluid: ~16rem (phone) → 56rem (wide desktop).
+     16rem ≈ 270px on phone — nearly full-width with padding.
+     56rem ≈ 1075px on 1920px desktop — spacious reading. */
+  --measure:      clamp(16rem, 88vw, 56rem);
   --line-height:  1.7;
+
+  /* Fluid body padding: tight on phones, generous on desktop */
+  --pad-y:        clamp(1.5rem, 1rem + 2vw, 3rem);
+  --pad-x:        clamp(0.75rem, 0.5rem + 1.5vw, 2rem);
 
   /* Shadows & depth */
   --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.04);
@@ -87,7 +97,7 @@ html {
 
 body {
   margin: 0;
-  padding: 3rem 1.5rem 6rem;
+  padding: var(--pad-y) var(--pad-x) clamp(3rem, 2rem + 5vw, 6rem);
   font-family: var(--font-body);
   font-weight: 400;
   line-height: var(--line-height);
@@ -119,7 +129,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 h1 {
-  font-size: 2.4rem;
+  font-size: clamp(1.8rem, 1.4rem + 2vw, 2.6rem);
   font-weight: 600;
   margin-top: 1em;
   margin-bottom: 0.75em;
@@ -130,7 +140,7 @@ h1 {
 h1::after {
   content: '';
   display: block;
-  width: 3rem;
+  width: clamp(2rem, 0.5rem + 4vw, 3.5rem);
   height: 3px;
   margin-top: 0.5em;
   background: var(--accent);
@@ -138,19 +148,19 @@ h1::after {
 }
 
 h2 {
-  font-size: 1.7rem;
+  font-size: clamp(1.4rem, 1.15rem + 1.2vw, 1.85rem);
   font-weight: 500;
 }
 
 h3 {
-  font-size: 1.35rem;
+  font-size: clamp(1.15rem, 1rem + 0.6vw, 1.4rem);
   font-weight: 600;
   font-style: italic;
 }
 
-h4 { font-size: 1.15rem; font-weight: 600; }
-h5 { font-size: 1.05rem; font-weight: 600; font-style: italic; }
-h6 { font-size: 0.95rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); }
+h4 { font-size: clamp(1rem, 0.9rem + 0.3vw, 1.15rem); font-weight: 600; }
+h5 { font-size: clamp(0.92rem, 0.85rem + 0.3vw, 1.05rem); font-weight: 600; font-style: italic; }
+h6 { font-size: clamp(0.82rem, 0.75rem + 0.3vw, 0.95rem); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); }
 
 /* ── Paragraphs & inline ───────────────────────────────── */
 
@@ -205,15 +215,24 @@ code {
   white-space: nowrap;
 }
 
+/* Allow long inline code to wrap on narrow screens */
+@media (max-width: 480px) {
+  code {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
 pre {
   margin: 1.5em 0;
-  padding: 1.2em 1.4em;
+  padding: clamp(0.8em, 0.5em + 1vw, 1.2em) clamp(0.9em, 0.6em + 1vw, 1.4em);
   overflow-x: auto;
   background: var(--code-paper);
   border: 1px solid var(--code-border);
   border-radius: 6px;
   box-shadow: var(--shadow-sm);
   position: relative;
+  -webkit-overflow-scrolling: touch;
 }
 
 pre code {
@@ -234,7 +253,7 @@ pre::before {
   top: 0;
   left: 0;
   width: 100%;
-  height: 2px;
+  height: clamp(1px, 0.5vw, 2px);
   background: var(--accent);
   opacity: 0.3;
   border-radius: 6px 6px 0 0;
@@ -291,7 +310,7 @@ table {
   width: 100%;
   margin: 1.5em 0;
   border-collapse: collapse;
-  font-size: 0.95em;
+  font-size: clamp(0.8em, 0.7em + 0.3vw, 0.95em);
   box-shadow: var(--shadow-sm);
   border-radius: 6px;
   overflow: hidden;
@@ -402,6 +421,14 @@ input[type="checkbox"] {
 
 /* ── Smooth theme transition ───────────────────────────── */
 
-* {
+body,
+pre, code,
+blockquote,
+table, th, td,
+hr {
   transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+::selection {
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
