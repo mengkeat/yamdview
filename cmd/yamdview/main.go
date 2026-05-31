@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mengkeat/yamdview/internal/app"
 	"github.com/mengkeat/yamdview/internal/cli"
+	"github.com/mengkeat/yamdview/web"
 )
 
 func main() {
@@ -14,5 +16,20 @@ func main() {
 		os.Exit(2)
 	}
 
-	fmt.Printf("yamdview bootstrap: %s\n", cfg.MarkdownPath)
+	assets, err := web.LoadAssets()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load assets: %v\n", err)
+		os.Exit(1)
+	}
+
+	application := app.New(app.Config{
+		MarkdownPath: cfg.MarkdownPath,
+		Addr:         cfg.Addr,
+		NoOpen:       cfg.NoOpen,
+	}, assets)
+
+	if err := application.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }

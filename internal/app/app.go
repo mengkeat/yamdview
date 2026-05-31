@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/yuin/goldmark"
+
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
@@ -24,7 +26,7 @@ type Config struct {
 // App orchestrates rendering, serving, and browser opening.
 type App struct {
 	cfg    Config
-	md     markdown.Renderer
+	md     goldmark.Markdown
 	assets server.Assets
 }
 
