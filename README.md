@@ -4,7 +4,7 @@
 
 ## Current status
 
-Phase 1 complete: static Markdown to browser view. File watching and live updates arrive in Phase 2.
+Phase 2 complete: Markdown files are watched and browser views live-reload with full-page reset updates.
 
 ## Usage
 
@@ -13,7 +13,7 @@ make build
 ./bin/yamdview path/to/file.md
 ```
 
-This opens your default browser showing the rendered Markdown. Use `--no-open` to suppress browser opening:
+This opens your default browser showing the rendered Markdown. Saving the source file refreshes the browser automatically. Use `--no-open` to suppress browser opening:
 
 ```sh
 ./bin/yamdview --no-open README.md
@@ -24,6 +24,7 @@ This opens your default browser showing the rendered Markdown. Use `--no-open` t
 | Flag | Default | Description |
 | ---- | ------- | ----------- |
 | `--addr` | `127.0.0.1:0` | HTTP bind address (port 0 picks a free port) |
+| `--debounce` | `150ms` | File watcher debounce duration |
 | `--no-open` | `false` | Do not open the system browser automatically |
 
 Press `Ctrl+C` to shut down the server.
@@ -54,7 +55,6 @@ Local generated files are ignored under `.cache/`, `bin/`, `dist/`, and `.tmp/`.
 
 Planned capabilities include:
 
-- file watching and live browser updates (Phase 2)
 - block-level Markdown diffing and DOM patching (Phase 3)
 - explicit and Unicode mathematical notation support with local KaTeX assets (Phase 4–5)
 - heuristic repair for malformed Markdown tables (Phase 6)
