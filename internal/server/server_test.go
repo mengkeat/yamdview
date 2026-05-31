@@ -1,6 +1,8 @@
 package server_test
 
 import (
+	"bufio"
+	"encoding/json"
 	"html/template"
 	"io"
 	"net/http"
@@ -167,6 +169,64 @@ func TestSetContentUpdatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestBroadcastResetSendsSSEAndUpdatesSnapshot(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Original</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	connected := readSSEBlock(t, reader)
+	if len(connected) != 1 || connected[0] != ": connected" {
+		t.Fatalf("expected connected comment, got %v", connected)
+	}
+
+	if err := srv.BroadcastReset("<p>Updated</p>"); err != nil {
+		t.Fatal(err)
+	}
+
+	block := readSSEBlock(t, reader)
+	if len(block) != 2 {
+		t.Fatalf("expected reset event and data, got %v", block)
+	}
+	if block[0] != "event: reset" {
+		t.Fatalf("expected reset event, got %q", block[0])
+	}
+	if !strings.HasPrefix(block[1], "data: ") {
+		t.Fatalf("expected data line, got %q", block[1])
+	}
+
+	var payload struct {
+		Op   string `json:"op"`
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(block[1], "data: ")), &payload); err != nil {
+		t.Fatalf("unmarshal reset payload: %v", err)
+	}
+	if payload.Op != "reset" || payload.HTML != "<p>Updated</p>" {
+		t.Fatalf("unexpected payload: %+v", payload)
+	}
+
+	snapshot, err := http.Get(srv.URL() + "snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(snapshot.Body)
+	snapshot.Body.Close()
+	if string(body) != "<p>Updated</p>" {
+		t.Fatalf("expected updated snapshot, got %q", body)
+	}
+}
+
 func TestRenderPage(t *testing.T) {
 	out, err := server.RenderPage(testAssets, testPageData("Rendered", "<p>Rendered Content</p>"))
 	if err != nil {
@@ -186,5 +246,22 @@ func TestServerRejectsInvalidAddr(t *testing.T) {
 	_, err := server.New("256.256.256.256:99999", testAssets, server.PageData{})
 	if err == nil {
 		t.Fatal("expected error for invalid address")
+	}
+}
+
+func readSSEBlock(t *testing.T, reader *bufio.Reader) []string {
+	t.Helper()
+
+	var lines []string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read SSE line: %v", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			return lines
+		}
+		lines = append(lines, line)
 	}
 }
