@@ -301,6 +301,14 @@ func RenderPage(assets Assets, data PageData) ([]byte, error) {
 // fixes the content column width for the named target viewport (phone,
 // tablet, laptop, desktop).
 func ExportStandalone(assets Assets, data PageData, view string) (string, error) {
+	// Populate CSS/JS from assets if not already set.
+	if data.CSS == "" {
+		data.CSS = template.CSS(assets.ViewerCSS)
+	}
+	if data.JS == "" {
+		data.JS = template.JS(assets.ViewerJS)
+	}
+
 	if view != "" {
 		if !ValidExportView(view) {
 			return "", fmt.Errorf("unknown --export-view %q (valid: phone, tablet, laptop, desktop)", view)

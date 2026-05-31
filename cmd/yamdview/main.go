@@ -27,6 +27,8 @@ func main() {
 		Addr:         cfg.Addr,
 		NoOpen:       cfg.NoOpen,
 		Debounce:     cfg.Debounce,
+		Export:       cfg.Export,
+		ExportView:   cfg.ExportView,
 	}, assets)
 
 	if err := application.Run(); err != nil {

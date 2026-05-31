@@ -116,3 +116,78 @@ func readSSEBlock(t *testing.T, reader *bufio.Reader) []string {
 		lines = append(lines, line)
 	}
 }
+
+func TestExportWritesStandaloneFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "out.html")
+
+	if err := os.WriteFile(src, []byte("# Exported\n\nHello, world.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+		ExportView:   "tablet",
+	}, testAssets)
+
+	if err := application.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := string(data)
+	if !strings.Contains(out, "Hello, world.") {
+		t.Error("exported file missing content")
+	}
+	if !strings.Contains(out, "Exported") {
+		t.Error("exported file missing title")
+	}
+	if !strings.Contains(out, "--measure:40rem") {
+		t.Error("exported file missing tablet viewport override")
+	}
+	if !strings.Contains(out, testAssets.ViewerCSS) {
+		t.Error("exported file missing CSS")
+	}
+	if !strings.Contains(out, testAssets.ViewerJS) {
+		t.Error("exported file missing JS")
+	}
+}
+
+func TestExportWithoutViewport(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "out.html")
+
+	if err := os.WriteFile(src, []byte("# Plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+	}, testAssets)
+
+	if err := application.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := string(data)
+	if !strings.Contains(out, "Plain") {
+		t.Error("exported file missing content")
+	}
+	// No export override comment should be present.
+	if strings.Contains(out, "yamdview export") {
+		t.Error("exported file should not contain viewport override comment")
+	}
+}

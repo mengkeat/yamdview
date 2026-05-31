@@ -25,6 +25,8 @@ type Config struct {
 	Addr         string // bind address, e.g. "127.0.0.1:0"
 	NoOpen       bool   // do not open browser
 	Debounce     time.Duration
+	Export       string // export standalone HTML to this path (empty = serve)
+	ExportView   string // viewport target for export
 }
 
 // App orchestrates rendering, serving, and browser opening.
@@ -43,8 +45,40 @@ func New(cfg Config, assets server.Assets) *App {
 	}
 }
 
-// Run executes the main application flow: render, serve, open browser, wait for signal.
+// Run executes the main application flow: export or serve + live reload.
 func (a *App) Run() error {
+	if a.cfg.Export != "" {
+		return a.exportStandalone()
+	}
+	return a.serve()
+}
+
+// exportStandalone renders the Markdown file to a self-contained HTML document
+// and writes it to the path specified by cfg.Export.
+func (a *App) exportStandalone() error {
+	content, err := a.renderFile()
+	if err != nil {
+		return fmt.Errorf("render markdown: %w", err)
+	}
+
+	html, err := server.ExportStandalone(a.assets, server.PageData{
+		Title:   a.cfg.MarkdownPath,
+		Content: content,
+	}, a.cfg.ExportView)
+	if err != nil {
+		return fmt.Errorf("export: %w", err)
+	}
+
+	if err := os.WriteFile(a.cfg.Export, []byte(html), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", a.cfg.Export, err)
+	}
+
+	log.Printf("exported %s → %s", a.cfg.MarkdownPath, a.cfg.Export)
+	return nil
+}
+
+// serve renders, starts the HTTP server, opens the browser, and reloads on changes.
+func (a *App) serve() error {
 	// Read and render the Markdown file.
 	content, err := a.renderFile()
 	if err != nil {
