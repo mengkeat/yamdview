@@ -411,6 +411,43 @@ input[type="checkbox"] {
   color: var(--ink);
 }
 
+/* ── Math ──────────────────────────────────────────────── */
+
+.math {
+  font-family: inherit;
+}
+
+.math-inline {
+  /* noop: KaTeX replaces content in-place */
+}
+
+.math-display {
+  display: block;
+  margin: 1.5em 0;
+  text-align: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+}
+
+/* Show error state for failed KaTeX renders */
+.math[data-math-rendered="error"] {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--accent-glow);
+  border: 1px dashed var(--accent-soft);
+  border-radius: 4px;
+  padding: 0.3em 0.6em;
+}
+
+.math[data-math-rendered="error"]::after {
+  content: ' ⚠ math error';
+  opacity: 0.6;
+  font-size: 0.8em;
+  margin-left: 0.4em;
+}
+
 /* ── Focus ─────────────────────────────────────────────── */
 
 :focus-visible {

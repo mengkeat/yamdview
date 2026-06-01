@@ -318,7 +318,7 @@ func (r *mathHTMLRenderer) renderInlineMath(w util.BufWriter, source []byte, nod
 
 	tex := extractInlineTeX(source, node)
 	fmt.Fprintf(w, `<span class="math math-inline" data-tex="%s"></span>`, escapeHTMLAttr(tex))
-	return gast.WalkContinue, nil
+	return gast.WalkSkipChildren, nil
 }
 
 func (r *mathHTMLRenderer) renderDisplayMath(w util.BufWriter, source []byte, node gast.Node, entering bool) (gast.WalkStatus, error) {
@@ -328,7 +328,7 @@ func (r *mathHTMLRenderer) renderDisplayMath(w util.BufWriter, source []byte, no
 
 	tex := extractBlockTeX(source, node)
 	fmt.Fprintf(w, `<div class="math math-display" data-tex="%s"></div>`+"\n", escapeHTMLAttr(tex))
-	return gast.WalkContinue, nil
+	return gast.WalkSkipChildren, nil
 }
 
 func (r *mathHTMLRenderer) renderFencedMath(w util.BufWriter, source []byte, node gast.Node, entering bool) (gast.WalkStatus, error) {
