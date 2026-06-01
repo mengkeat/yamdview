@@ -6,6 +6,8 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+
+	"github.com/mengkeat/yamdview/internal/markdown/math"
 )
 
 // NewRenderer creates a goldmark instance configured with sensible defaults
@@ -17,6 +19,7 @@ func NewRenderer() goldmark.Markdown {
 			extension.Strikethrough,
 			extension.TaskList,
 			extension.Linkify,
+			math.Math,
 		),
 	)
 }
