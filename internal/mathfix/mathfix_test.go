@@ -508,3 +508,35 @@ func TestPreprocessTildeFence(t *testing.T) {
 		t.Errorf("tilde fence content modified:\ngot:  %q\nwant: %q", got, input)
 	}
 }
+
+func TestConvertCharsSpacing(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no double spaces after operators",
+			input: "∀x ∈ ℝ",
+			want:  `\forall x \in \mathbb{R}`,
+		},
+		{
+			name:  "space before letter but not before comma",
+			input: "x ∈ ℝ, y ∈ ℕ",
+			want:  `x \in \mathbb{R}, y \in \mathbb{N}`,
+		},
+		{
+			name:  "space before letter after ge",
+			input: "x ≥ 0",
+			want:  `x \ge 0`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if got != tc.want {
+				t.Errorf("convertChars(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

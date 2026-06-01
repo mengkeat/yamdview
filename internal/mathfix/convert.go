@@ -7,45 +7,48 @@ import (
 // ── Character mapping tables ─────────────────────────────
 
 // charMap maps Unicode characters to their TeX equivalents.
+// Commands do NOT include trailing spaces; spacing is handled by the
+// converter which adds a space after commands only when the next
+// character is an ASCII letter (to prevent \alphax instead of \alpha x).
 var charMap = map[rune]string{
 	// Greek lowercase
-	'α': `\alpha `, 'β': `\beta `, 'γ': `\gamma `, 'δ': `\delta `,
-	'ε': `\varepsilon `, 'ζ': `\zeta `, 'η': `\eta `, 'θ': `\theta `,
-	'ι': `\iota `, 'κ': `\kappa `, 'λ': `\lambda `, 'μ': `\mu `,
-	'ν': `\nu `, 'ξ': `\xi `, 'π': `\pi `, 'ρ': `\rho `,
-	'σ': `\sigma `, 'τ': `\tau `, 'υ': `\upsilon `, 'φ': `\phi `,
-	'χ': `\chi `, 'ψ': `\psi `, 'ω': `\omega `,
+	'α': `\alpha`, 'β': `\beta`, 'γ': `\gamma`, 'δ': `\delta`,
+	'ε': `\varepsilon`, 'ζ': `\zeta`, 'η': `\eta`, 'θ': `\theta`,
+	'ι': `\iota`, 'κ': `\kappa`, 'λ': `\lambda`, 'μ': `\mu`,
+	'ν': `\nu`, 'ξ': `\xi`, 'π': `\pi`, 'ρ': `\rho`,
+	'σ': `\sigma`, 'τ': `\tau`, 'υ': `\upsilon`, 'φ': `\phi`,
+	'χ': `\chi`, 'ψ': `\psi`, 'ω': `\omega`,
 
 	// Greek uppercase (only those that differ from Latin shapes)
-	'Γ': `\Gamma `, 'Δ': `\Delta `, 'Θ': `\Theta `, 'Λ': `\Lambda `,
-	'Ξ': `\Xi `, 'Π': `\Pi `, 'Σ': `\Sigma `, 'Υ': `\Upsilon `,
-	'Φ': `\Phi `, 'Ψ': `\Psi `, 'Ω': `\Omega `,
+	'Γ': `\Gamma`, 'Δ': `\Delta`, 'Θ': `\Theta`, 'Λ': `\Lambda`,
+	'Ξ': `\Xi`, 'Π': `\Pi`, 'Σ': `\Sigma`, 'Υ': `\Upsilon`,
+	'Φ': `\Phi`, 'Ψ': `\Psi`, 'Ω': `\Omega`,
 
 	// Greek variants
-	'ϵ': `\epsilon `, 'ϑ': `\vartheta `, 'ϕ': `\varphi `, 'ϱ': `\varrho `,
-	'ϰ': `\varkappa `, 'ϖ': `\varpi `, 'ℓ': `\ell `,
+	'ϵ': `\epsilon`, 'ϑ': `\vartheta`, 'ϕ': `\varphi`, 'ϱ': `\varrho`,
+	'ϰ': `\varkappa`, 'ϖ': `\varpi`, 'ℓ': `\ell`,
 
 	// Math operators
-	'∀': `\forall `, '∃': `\exists `, '∈': `\in `, '∉': `\notin `,
-	'∑': `\sum `, '∏': `\prod `, '∫': `\int `, '∮': `\oint `,
-	'∂': `\partial `, '∇': `\nabla `, '∞': `\infty `,
-	'≤': `\le `, '≥': `\ge `, '≠': `\neq `, '≈': `\approx `,
-	'∝': `\propto `, '∼': `\sim `, '≅': `\cong `, '≡': `\equiv `,
-	'±': `\pm `, '∓': `\mp `, '×': `\times `, '÷': `\div `,
-	'→': `\to `, '↦': `\mapsto `, '⇒': `\Rightarrow `, '⇔': `\Leftrightarrow `,
-	'←': `\leftarrow `, '↔': `\leftrightarrow `, '↓': `\downarrow `, '↑': `\uparrow `,
-	'⊂': `\subset `, '⊃': `\supset `, '⊆': `\subseteq `, '⊇': `\supseteq `,
-	'⊄': `\not\subset `, '⊅': `\not\supset `,
-	'∪': `\cup `, '∩': `\cap `, '∅': `\emptyset `,
-	'¬': `\neg `, '∧': `\land `, '∨': `\lor `,
-	'⊕': `\oplus `, '⊗': `\otimes `, '⊥': `\perp `, '∠': `\angle `, '‖': `\parallel `,
-	'·': `\cdot `, '…': `\ldots `,
-	'∘': `\circ `, '⋆': `\star `,
+	'∀': `\forall`, '∃': `\exists`, '∈': `\in`, '∉': `\notin`,
+	'∑': `\sum`, '∏': `\prod`, '∫': `\int`, '∮': `\oint`,
+	'∂': `\partial`, '∇': `\nabla`, '∞': `\infty`,
+	'≤': `\le`, '≥': `\ge`, '≠': `\neq`, '≈': `\approx`,
+	'∝': `\propto`, '∼': `\sim`, '≅': `\cong`, '≡': `\equiv`,
+	'±': `\pm`, '∓': `\mp`, '×': `\times`, '÷': `\div`,
+	'→': `\to`, '↦': `\mapsto`, '⇒': `\Rightarrow`, '⇔': `\Leftrightarrow`,
+	'←': `\leftarrow`, '↔': `\leftrightarrow`, '↓': `\downarrow`, '↑': `\uparrow`,
+	'⊂': `\subset`, '⊃': `\supset`, '⊆': `\subseteq`, '⊇': `\supseteq`,
+	'⊄': `\not\subset`, '⊅': `\not\supset`,
+	'∪': `\cup`, '∩': `\cap`, '∅': `\emptyset`,
+	'¬': `\neg`, '∧': `\land`, '∨': `\lor`,
+	'⊕': `\oplus`, '⊗': `\otimes`, '⊥': `\perp`, '∠': `\angle`, '‖': `\parallel`,
+	'·': `\cdot`, '…': `\ldots`,
+	'∘': `\circ`, '⋆': `\star`,
 
 	// Blackboard bold
-	'ℝ': `\mathbb{R} `, 'ℕ': `\mathbb{N} `, 'ℤ': `\mathbb{Z} `,
-	'ℚ': `\mathbb{Q} `, 'ℂ': `\mathbb{C} `, 'ℙ': `\mathbb{P} `,
-	'𝔽': `\mathbb{F} `, 'ℍ': `\mathbb{H} `,
+	'ℝ': `\mathbb{R}`, 'ℕ': `\mathbb{N}`, 'ℤ': `\mathbb{Z}`,
+	'ℚ': `\mathbb{Q}`, 'ℂ': `\mathbb{C}`, 'ℙ': `\mathbb{P}`,
+	'𝔽': `\mathbb{F}`, 'ℍ': `\mathbb{H}`,
 
 	// Fractions
 	'½': `\frac{1}{2}`, '⅓': `\frac{1}{3}`, '⅔': `\frac{2}{3}`,
@@ -120,6 +123,15 @@ func convertChars(text string) (string, []Diagnostic) {
 		// Character map lookup.
 		if tex, ok := charMap[r]; ok {
 			buf.WriteString(tex)
+			// Add a space after the command if the next character is an
+			// ASCII letter that would otherwise extend the command name
+			// (e.g. \forall x → needs space, but \forall, → no space needed).
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if isASCIIAlpha(next) {
+					buf.WriteByte(' ')
+				}
+			}
 			i++
 			continue
 		}
