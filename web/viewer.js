@@ -1,5 +1,5 @@
 // yamdview viewer script
-// Phase 4: full-page live reload over SSE with KaTeX math rendering.
+// Phase 3+: block-level live patching over SSE with KaTeX math rendering.
 
 (function () {
   "use strict";
@@ -36,8 +36,9 @@
         el.textContent = tex;
         el.setAttribute("data-math-rendered", "error");
         el.setAttribute("data-math-error", err.message);
+        var block = el.closest ? el.closest(".md-block") : null;
         errors.push({
-          block_id: el.id || "",
+          block_id: block ? block.id : (el.id || ""),
           kind: "math",
           message: err.message,
           tex: tex,
@@ -65,12 +66,27 @@
 
   // ── Document update ────────────────────────────────────
 
+  function getDocumentElement() {
+    return document.getElementById("document");
+  }
+
+  function elementFromHTML(html) {
+    var template = document.createElement("template");
+    template.innerHTML = html.trim();
+    return template.content.firstElementChild;
+  }
+
+  function renderAndReport(root) {
+    var errors = renderMath(root);
+    reportErrors(errors);
+  }
+
   /**
    * Replace the inner HTML of the document element with a brief fade transition,
    * then render any math in the new content.
    */
   function replaceDocument(html) {
-    var documentEl = document.getElementById("document");
+    var documentEl = getDocumentElement();
     if (!documentEl) {
       return;
     }
@@ -83,10 +99,79 @@
       requestAnimationFrame(function () {
         documentEl.innerHTML = html;
         documentEl.style.opacity = "1";
-        var errors = renderMath(documentEl);
-        reportErrors(errors);
+        renderAndReport(documentEl);
       });
     });
+  }
+
+  function refreshFromSnapshot(reason) {
+    console.warn("yamdview: falling back to snapshot reset", reason || "");
+    fetch("/snapshot")
+      .then(function (response) { return response.text(); })
+      .then(replaceDocument)
+      .catch(function (err) {
+        console.error("yamdview: failed to fetch snapshot", err);
+      });
+  }
+
+  function applyPatchOp(op) {
+    var documentEl = getDocumentElement();
+    if (!documentEl || !op || typeof op.op !== "string") {
+      return false;
+    }
+
+    if (op.op === "replace") {
+      var target = document.getElementById(op.id);
+      var replacement = elementFromHTML(op.html || "");
+      if (!target || !replacement) return false;
+      target.replaceWith(replacement);
+      renderAndReport(replacement);
+      return true;
+    }
+
+    if (op.op === "insert_after") {
+      var after = document.getElementById(op.after);
+      var afterElement = elementFromHTML(op.html || "");
+      if (!after || !afterElement) return false;
+      after.after(afterElement);
+      renderAndReport(afterElement);
+      return true;
+    }
+
+    if (op.op === "insert_before") {
+      var before = document.getElementById(op.before);
+      var beforeElement = elementFromHTML(op.html || "");
+      if (!before || !beforeElement) return false;
+      before.before(beforeElement);
+      renderAndReport(beforeElement);
+      return true;
+    }
+
+    if (op.op === "delete") {
+      var doomed = document.getElementById(op.id);
+      if (!doomed) return false;
+      doomed.remove();
+      return true;
+    }
+
+    if (op.op === "reset" && typeof op.html === "string") {
+      replaceDocument(op.html);
+      return true;
+    }
+
+    return false;
+  }
+
+  function applyPatches(ops) {
+    if (!Array.isArray(ops)) {
+      return false;
+    }
+    for (var i = 0; i < ops.length; i++) {
+      if (!applyPatchOp(ops[i])) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -104,6 +189,21 @@
   }
 
   /**
+   * Handle SSE patch events from the server.
+   */
+  function handlePatch(event) {
+    try {
+      var payload = JSON.parse(event.data);
+      if (!applyPatches(payload.ops)) {
+        refreshFromSnapshot("patch target missing or invalid");
+      }
+    } catch (err) {
+      console.error("yamdview: invalid patch event", err);
+      refreshFromSnapshot("invalid patch event");
+    }
+  }
+
+  /**
    * Connect to the SSE event stream for live reloads.
    */
   function connectEvents() {
@@ -114,6 +214,7 @@
 
     var source = new EventSource("/events");
     source.addEventListener("reset", handleReset);
+    source.addEventListener("patch", handlePatch);
   }
 
   // ── Initialisation ─────────────────────────────────────

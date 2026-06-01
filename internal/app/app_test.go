@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
 )
@@ -21,62 +23,132 @@ var testAssets = server.Assets{
 	ViewerJS:  "// test js",
 }
 
-func TestReloadLoopBroadcastsResetForChangedMarkdown(t *testing.T) {
+func TestReloadLoopBroadcastsReplaceForChangedParagraph(t *testing.T) {
+	path, srv, reader, changes := startReloadLoopTest(t, "# Title\n\nOriginal paragraph.\n\nTail paragraph.\n")
+
+	if err := os.WriteFile(path, []byte("# Title\n\nUpdated paragraph.\n\nTail paragraph.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes <- watcher.Event{Path: path}
+
+	payload := readPatchPayload(t, reader)
+	if len(payload.Ops) != 1 {
+		t.Fatalf("expected 1 patch op, got %+v", payload.Ops)
+	}
+	op := payload.Ops[0]
+	if op.Op != document.OpReplace {
+		t.Fatalf("expected replace op, got %+v", op)
+	}
+	if !strings.Contains(op.HTML, "Updated paragraph") {
+		t.Fatalf("replace HTML missing updated paragraph:\n%s", op.HTML)
+	}
+	if strings.Contains(op.HTML, "Tail paragraph") {
+		t.Fatalf("replace HTML should not include unchanged tail paragraph:\n%s", op.HTML)
+	}
+
+	assertSnapshotContains(t, srv, "Updated paragraph")
+}
+
+func TestReloadLoopBroadcastsInsertForAddedHeading(t *testing.T) {
+	path, srv, reader, changes := startReloadLoopTest(t, "# Title\n\nParagraph.\n")
+
+	if err := os.WriteFile(path, []byte("# Title\n\n## Inserted\n\nParagraph.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes <- watcher.Event{Path: path}
+
+	payload := readPatchPayload(t, reader)
+	if len(payload.Ops) != 1 {
+		t.Fatalf("expected 1 patch op, got %+v", payload.Ops)
+	}
+	op := payload.Ops[0]
+	if op.Op != document.OpInsertAfter && op.Op != document.OpInsertBefore {
+		t.Fatalf("expected insert op, got %+v", op)
+	}
+	if !strings.Contains(op.HTML, "Inserted") {
+		t.Fatalf("insert HTML missing heading:\n%s", op.HTML)
+	}
+
+	assertSnapshotContains(t, srv, "Inserted")
+}
+
+func TestReloadLoopBroadcastsResetForReferenceFallback(t *testing.T) {
+	path, srv, reader, changes := startReloadLoopTest(t, "See [docs][docs].\n\n[docs]: https://example.com\n")
+
+	if err := os.WriteFile(path, []byte("See [docs][docs].\n\n[docs]: https://example.org\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes <- watcher.Event{Path: path}
+
+	payload := readResetPayload(t, reader)
+	if payload.Op != document.OpReset || !strings.Contains(payload.HTML, "https://example.org") {
+		t.Fatalf("unexpected reset payload: %+v", payload)
+	}
+
+	assertSnapshotContains(t, srv, "https://example.org")
+}
+
+func startReloadLoopTest(t *testing.T, initial string) (string, *server.Server, *bufio.Reader, chan<- watcher.Event) {
+	t.Helper()
+
 	path := filepath.Join(t.TempDir(), "doc.md")
-	if err := os.WriteFile(path, []byte("# Original\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	application := New(Config{MarkdownPath: path}, testAssets)
-	initialContent, err := application.renderFile()
+	initialSnapshot, err := application.snapshotFile()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	srv, err := server.New("127.0.0.1:0", testAssets, server.PageData{
 		Title:   path,
-		Content: initialContent,
+		Content: template.HTML(initialSnapshot.HTML),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
-	srv.Start()
+	t.Cleanup(func() { _ = srv.Close() })
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
 
 	resp, err := http.Get(srv.URL() + "events")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 
 	reader := bufio.NewReader(resp.Body)
 	readSSEBlock(t, reader) // connected comment
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
 	changes := make(chan watcher.Event, 1)
 	watchErrs := make(chan error)
-	go application.reloadLoop(ctx, srv, changes, watchErrs)
+	go application.reloadLoop(ctx, srv, changes, watchErrs, initialSnapshot)
 
-	if err := os.WriteFile(path, []byte("# Updated\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	changes <- watcher.Event{Path: path}
+	return path, srv, reader, changes
+}
 
-	payload := readResetPayload(t, reader)
-	if payload.Op != "reset" || !strings.Contains(payload.HTML, "Updated") {
-		t.Fatalf("unexpected reset payload: %+v", payload)
+func readPatchPayload(t *testing.T, reader *bufio.Reader) struct {
+	Ops []document.PatchOp `json:"ops"`
+} {
+	t.Helper()
+
+	block := readSSEBlock(t, reader)
+	if len(block) != 2 || block[0] != "event: patch" || !strings.HasPrefix(block[1], "data: ") {
+		t.Fatalf("expected patch SSE block, got %v", block)
 	}
 
-	snapshot, err := http.Get(srv.URL() + "snapshot")
-	if err != nil {
-		t.Fatal(err)
+	var payload struct {
+		Ops []document.PatchOp `json:"ops"`
 	}
-	body, _ := io.ReadAll(snapshot.Body)
-	snapshot.Body.Close()
-	if !strings.Contains(string(body), "Updated") {
-		t.Fatalf("expected updated snapshot, got %q", body)
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(block[1], "data: ")), &payload); err != nil {
+		t.Fatalf("unmarshal patch payload: %v", err)
 	}
+	return payload
 }
 
 func readResetPayload(t *testing.T, reader *bufio.Reader) struct {
@@ -114,6 +186,20 @@ func readSSEBlock(t *testing.T, reader *bufio.Reader) []string {
 			return lines
 		}
 		lines = append(lines, line)
+	}
+}
+
+func assertSnapshotContains(t *testing.T, srv *server.Server, want string) {
+	t.Helper()
+
+	snapshot, err := http.Get(srv.URL() + "snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(snapshot.Body)
+	snapshot.Body.Close()
+	if !strings.Contains(string(body), want) {
+		t.Fatalf("expected snapshot to contain %q, got %q", want, body)
 	}
 }
 

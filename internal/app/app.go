@@ -14,6 +14,7 @@ import (
 	"github.com/yuin/goldmark"
 
 	"github.com/mengkeat/yamdview/internal/browser"
+	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
@@ -57,14 +58,14 @@ func (a *App) Run() error {
 // exportStandalone renders the Markdown file to a self-contained HTML document
 // and writes it to the path specified by cfg.Export.
 func (a *App) exportStandalone() error {
-	content, err := a.renderFile()
+	snapshot, err := a.snapshotFile()
 	if err != nil {
 		return fmt.Errorf("render markdown: %w", err)
 	}
 
 	html, err := server.ExportStandalone(a.assets, server.PageData{
 		Title:   a.cfg.MarkdownPath,
-		Content: content,
+		Content: template.HTML(snapshot.HTML),
 	}, a.cfg.ExportView)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
@@ -80,8 +81,8 @@ func (a *App) exportStandalone() error {
 
 // serve renders, starts the HTTP server, opens the browser, and reloads on changes.
 func (a *App) serve() error {
-	// Read and render the Markdown file.
-	content, err := a.renderFile()
+	// Read, segment, and render the Markdown file.
+	snapshot, err := a.snapshotFile()
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
@@ -89,7 +90,7 @@ func (a *App) serve() error {
 	// Create and start HTTP server.
 	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
 		Title:   a.cfg.MarkdownPath,
-		Content: content,
+		Content: template.HTML(snapshot.HTML),
 	}, server.WithKatexFS(web.KatexFS()))
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -109,7 +110,7 @@ func (a *App) serve() error {
 	defer fileWatcher.Close()
 
 	changes, watchErrs := fileWatcher.Watch(ctx)
-	go a.reloadLoop(ctx, srv, changes, watchErrs)
+	go a.reloadLoop(ctx, srv, changes, watchErrs, snapshot)
 
 	// Open browser unless suppressed.
 	if !a.cfg.NoOpen {
@@ -124,22 +125,31 @@ func (a *App) serve() error {
 	return nil
 }
 
-// renderFile reads the Markdown file and returns rendered HTML.
+// renderFile reads the Markdown file and returns section-wrapped rendered HTML.
 func (a *App) renderFile() (template.HTML, error) {
-	data, err := os.ReadFile(a.cfg.MarkdownPath)
+	snapshot, err := a.snapshotFile()
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
+		return "", err
 	}
-
-	html, err := markdown.Render(a.md, data)
-	if err != nil {
-		return "", fmt.Errorf("render markdown: %w", err)
-	}
-
-	return template.HTML(html), nil
+	return template.HTML(snapshot.HTML), nil
 }
 
-func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error) {
+// snapshotFile reads the Markdown file and builds a block-oriented snapshot.
+func (a *App) snapshotFile() (document.DocumentSnapshot, error) {
+	data, err := os.ReadFile(a.cfg.MarkdownPath)
+	if err != nil {
+		return document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
+	}
+
+	snapshot, err := document.BuildSnapshot(a.md, data)
+	if err != nil {
+		return document.DocumentSnapshot{}, fmt.Errorf("render markdown: %w", err)
+	}
+
+	return snapshot, nil
+}
+
+func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,16 +165,30 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 				changes = nil
 				continue
 			}
-			content, err := a.renderFile()
+			next, err := a.snapshotFile()
 			if err != nil {
 				log.Printf("warning: could not reload markdown: %v", err)
 				continue
 			}
-			if err := srv.BroadcastReset(content); err != nil {
-				log.Printf("warning: could not broadcast reload: %v", err)
+
+			diff := document.Diff(current, next)
+			content := template.HTML(diff.Snapshot.HTML)
+			if diff.Reset {
+				if err := srv.BroadcastReset(content); err != nil {
+					log.Printf("warning: could not broadcast reset: %v", err)
+					continue
+				}
+				current = diff.Snapshot
+				log.Printf("reloaded %s with full reset", a.cfg.MarkdownPath)
 				continue
 			}
-			log.Printf("reloaded %s", a.cfg.MarkdownPath)
+
+			if err := srv.BroadcastPatches(content, diff.Ops); err != nil {
+				log.Printf("warning: could not broadcast patches: %v", err)
+				continue
+			}
+			current = diff.Snapshot
+			log.Printf("patched %s (%d ops)", a.cfg.MarkdownPath, len(diff.Ops))
 		}
 	}
 }
