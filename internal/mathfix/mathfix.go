@@ -164,7 +164,7 @@ func inCodeRangeByte(pos int, ranges []codeRange) bool {
 // contain Unicode math notation. It starts from Unicode math character
 // positions and extends through adjacent math-relevant characters (digits,
 // single-letter variables, operators, parentheses), stopping at English words
-// of 3+ letters.
+// of 2+ letters.
 func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	runes := []rune(text)
 	n := len(runes)
@@ -193,6 +193,11 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	}
 
 	// For each seed, extend left and right through math-relevant chars.
+	// Extension uses two word-length thresholds:
+	//   - direct adjacency (no space between): allow words up to 2 letters
+	//     (e.g. "dx" in "∫₀¹ x² dx" where the 'd' is directly reachable)
+	//   - through a space: allow only single letters (word length 1)
+	//     to avoid pulling in English words like "to", "of", "in".
 	type span struct{ start, end int }
 	var rawSpans []span
 
@@ -200,26 +205,45 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 		s := seed
 		e := seed + 1
 
-		// Extend left.
+		// Extend left: only single letters across spaces.
 		for s > 0 {
 			if codeRuneSet[s-1] {
 				break
 			}
 			r := runes[s-1]
-			if canExtendInto(r, runes, s-1) {
+			if canExtendLeft(r, runes, s-1) {
 				s--
 			} else {
 				break
 			}
 		}
 
-		// Extend right.
+		// Extend right: allow 2-letter words directly adjacent,
+		// but only single letters across spaces.
+		spaceCrossed := false
 		for e < n {
 			if codeRuneSet[e] {
 				break
 			}
 			r := runes[e]
-			if canExtendInto(r, runes, e, n) {
+			if r == ' ' && !spaceCrossed {
+				// Peek past spaces to decide whether to cross.
+				j := e
+				for j < n && runes[j] == ' ' {
+					j++
+				}
+				if j < n && canExtendThroughSpace(runes[j], runes, j) {
+					spaceCrossed = true
+					e = j // skip past spaces
+					continue
+				}
+				break
+			}
+			if canExtendRight(r, runes, e, spaceCrossed) {
+				if r == ' ' {
+					// Second space crossing: stop.
+					break
+				}
 				e++
 			} else {
 				break
@@ -262,10 +286,58 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	return result
 }
 
-// canExtendInto reports whether the character at position pos can be included
-// in a math span during extension.
-func canExtendInto(r rune, runes []rune, pos int, extra ...int) bool {
+// canExtendLeft reports whether the character at position pos can be included
+// in a math span when extending left. Conservative: only single letters
+// allowed (avoids pulling in "to", "of", "in" from across spaces).
+func canExtendLeft(r rune, runes []rune, pos int) bool {
 	switch {
+	case r >= '0' && r <= '9':
+		return true
+	case isASCIIAlpha(r):
+		return wordLengthAt(runes, pos) <= 1
+	case r == '+' || r == '-' || r == '=' || r == '<' || r == '>' || r == '*':
+		return true
+	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
+		return true
+	case r == ',' || r == '/' || r == ' ':
+		return true
+	case r == '^' || r == '_':
+		return true
+	}
+	return false
+}
+
+// canExtendRight reports whether character at position pos can be included when
+// extending right. If spaceCrossed is true, only single letters are allowed;
+// otherwise 2-letter words are also accepted for cases like "dx".
+func canExtendRight(r rune, runes []rune, pos int, spaceCrossed bool) bool {
+	switch {
+	case r >= '0' && r <= '9':
+		return true
+	case isASCIIAlpha(r):
+		maxLen := 2
+		if spaceCrossed {
+			maxLen = 1
+		}
+		return wordLengthAt(runes, pos) <= maxLen
+	case r == '+' || r == '-' || r == '=' || r == '<' || r == '>' || r == '*':
+		return true
+	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
+		return true
+	case r == ',' || r == '/':
+		return true
+	case r == '^' || r == '_':
+		return true
+	}
+	return false
+}
+
+// canExtendThroughSpace reports whether the first non-space character after
+// a space gap can be included in a math span.
+func canExtendThroughSpace(r rune, runes []rune, pos int) bool {
+	switch {
+	case isUnicodeMathChar(r):
+		return true
 	case r >= '0' && r <= '9':
 		return true
 	case isASCIIAlpha(r):
@@ -273,12 +345,6 @@ func canExtendInto(r rune, runes []rune, pos int, extra ...int) bool {
 	case r == '+' || r == '-' || r == '=' || r == '<' || r == '>' || r == '*':
 		return true
 	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
-		return true
-	case r == ',' || r == '/':
-		return true
-	case r == ' ':
-		return true
-	case r == '^' || r == '_':
 		return true
 	}
 	return false

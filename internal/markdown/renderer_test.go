@@ -138,6 +138,98 @@ func TestRenderUnicodeMathSquareRoot(t *testing.T) {
 	}
 }
 
+func TestRenderUnicodeMathFixtures(t *testing.T) {
+	fixtures := []struct {
+		name     string
+		contains []string
+		omits    []string
+	}{
+		{
+			name: "unicode-operators.md",
+			contains: []string{
+				`\forall`,
+				`\in`,
+				`\mathbb{R}`,
+				`^{2}`,
+				`\ge`,
+				`\alpha`,
+				`\int`,
+				`\sum`,
+			},
+			omits: []string{"∀", "∈", "ℝ", "∫₀¹", "αᵢ"},
+		},
+		{
+			name: "unicode-greek.md",
+			contains: []string{
+				`\pi`,
+				`\theta`,
+			},
+		},
+		{
+			name: "unicode-superscripts.md",
+			contains: []string{
+				`^{2}`,
+				`^{3}`,
+				`_{0}`,
+				`_{1}`,
+			},
+			omits: []string{"mc²", "x₀"},
+		},
+		{
+			name: "unicode-mixed.md",
+			contains: []string{
+				`\forall`,
+				`\int`,
+				`\frac{1}{3}`,
+				`\sqrt{`,
+				`\cup`,
+				`\cap`,
+			},
+			omits: []string{"∀x", "∫₀¹"},
+		},
+		{
+			name: "unicode-falsepositive.md",
+			contains: []string{
+				"café",
+				"résumé",
+				"$42.99",
+				"quick brown fox",
+				"∀",
+			},
+			omits: []string{
+				`\forall`, // the ∀ in code fence should NOT be converted
+			},
+		},
+	}
+
+	md := NewRenderer()
+
+	for _, tc := range fixtures {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", tc.name))
+			if err != nil {
+				t.Fatalf("fixture not found: %v", err)
+			}
+
+			got, err := Render(md, data)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+
+			for _, want := range tc.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("expected output to contain %q\nGot: %s", want, got)
+				}
+			}
+			for _, notWant := range tc.omits {
+				if strings.Contains(got, notWant) {
+					t.Errorf("expected output to NOT contain %q\nGot: %s", notWant, got)
+				}
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }
