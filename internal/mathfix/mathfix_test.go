@@ -373,6 +373,40 @@ func TestPreprocess(t *testing.T) {
 	}
 }
 
+func TestPreprocessTextFenceEquation(t *testing.T) {
+	input := "```text\ndv/dt = g − kD |v| v + (kM·|ω|)(axis × v) + f_NN(v)\n```\n"
+	got := string(Preprocess([]byte(input)))
+
+	contains := []string{
+		"$$",
+		`\frac{dv}{dt}`,
+		`k_{D}`,
+		`\lvert v\rvert`,
+		`k_{M}`,
+		`\cdot`,
+		`\omega`,
+		`\mathrm{axis}`,
+		`\times`,
+		`f_{\mathrm{NN}}`,
+	}
+	for _, want := range contains {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in converted text fence, got: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "```text") {
+		t.Errorf("expected text fence to become display math, got: %q", got)
+	}
+}
+
+func TestPreprocessTextFenceProseUnchanged(t *testing.T) {
+	input := "```text\n10 passed in 27.38s\n```\n"
+	got := string(Preprocess([]byte(input)))
+	if got != input {
+		t.Errorf("plain text fence modified:\ngot:  %q\nwant: %q", got, input)
+	}
+}
+
 func TestPreprocessIdempotence(t *testing.T) {
 	// Running Preprocess twice should produce the same output as running once,
 	// because the first pass wraps math in $ delimiters, and hasTeXDelimiters

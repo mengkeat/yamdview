@@ -127,6 +127,25 @@ func TestRenderUnicodeMathFraction(t *testing.T) {
 	}
 }
 
+func TestRenderTextFenceEquation(t *testing.T) {
+	md := NewRenderer()
+	input := "```text\ndv/dt = g − kD |v| v + (kM·|ω|)(axis × v) + f_NN(v)\n```\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	contains := []string{`math-display`, `\frac{dv}{dt}`, `\lvert v\rvert`, `f_{\mathrm{NN}}`}
+	for _, want := range contains {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q\nGot: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "<pre><code") {
+		t.Errorf("expected equation text fence to render as math, got code block:\n%s", got)
+	}
+}
+
 func TestRenderUnicodeMathSquareRoot(t *testing.T) {
 	md := NewRenderer()
 	got, err := Render(md, []byte("The magnitude is √(x²+y²)\n"))
