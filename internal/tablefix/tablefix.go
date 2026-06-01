@@ -2,8 +2,11 @@
 package tablefix
 
 import (
+	"bytes"
 	"strings"
 	"unicode"
+
+	"github.com/mengkeat/yamdview/internal/mdfence"
 )
 
 const (
@@ -94,12 +97,13 @@ func Fix(source string) Result {
 // Fenced code blocks are preserved. Repairs are render-only; callers decide
 // whether to use the returned bytes for rendering.
 func Preprocess(src []byte) []byte {
-	if len(src) == 0 {
+	if len(src) == 0 || !bytes.Contains(src, []byte("|")) {
 		return src
 	}
 
 	lines := splitLinesKeep(string(src))
 	out := make([]string, 0, len(lines))
+	applied := false
 	inFence := false
 	fenceMarker := ""
 
@@ -145,6 +149,7 @@ func Preprocess(src []byte) []byte {
 		fixed := Fix(block)
 		if fixed.TableLike && fixed.Applied {
 			out = append(out, fixed.Markdown)
+			applied = true
 			i = j
 			continue
 		}
@@ -153,6 +158,9 @@ func Preprocess(src []byte) []byte {
 		i = j
 	}
 
+	if !applied {
+		return src
+	}
 	return []byte(strings.Join(out, ""))
 }
 
@@ -175,7 +183,7 @@ func LooksLikeTableContinuation(line string) bool {
 
 func repairWithSeparator(result Result, rows []row, trailing string) Result {
 	headerCols := len(rows[0].cells)
-	targetCols := maxColumns(rows, 0)
+	targetCols := maxColumns(rows)
 	if targetCols < headerCols {
 		targetCols = headerCols
 	}
@@ -207,7 +215,7 @@ func repairMissingSeparator(result Result, rows []row, trailing string) Result {
 		return result
 	}
 
-	targetCols := maxColumns(rows, 0)
+	targetCols := maxColumns(rows)
 	if targetCols < 2 {
 		result.Diagnostics = append(result.Diagnostics, warning(CodeAmbiguous, "table has fewer than two columns"))
 		return result
@@ -342,12 +350,9 @@ func renderSeparator(b *strings.Builder, cols int, aligns []alignment) {
 	b.WriteByte('\n')
 }
 
-func maxColumns(rows []row, skipIndex int) int {
+func maxColumns(rows []row) int {
 	max := 0
-	for i, row := range rows {
-		if i == skipIndex && row.separatorLike {
-			continue
-		}
+	for _, row := range rows {
 		if row.separatorLike {
 			continue
 		}
@@ -601,26 +606,15 @@ func trimLineEnding(s string) string {
 }
 
 func isFenceOpen(line string) bool {
-	return strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~")
+	return mdfence.IsOpen([]byte(line))
 }
 
 func isFenceClose(line, marker string) bool {
-	return marker != "" && strings.HasPrefix(line, marker)
+	return mdfence.IsClose([]byte(line), marker)
 }
 
 func fenceMarkerPrefix(line string) string {
-	if len(line) == 0 {
-		return ""
-	}
-	marker := line[0]
-	count := 0
-	for count < len(line) && line[count] == marker {
-		count++
-	}
-	if count < 3 {
-		return ""
-	}
-	return strings.Repeat(string(marker), count)
+	return mdfence.Marker([]byte(line))
 }
 
 func warning(code, message string) Diagnostic {

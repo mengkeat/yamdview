@@ -137,6 +137,23 @@ func TestFencedCodeBlockNotMath(t *testing.T) {
 	}
 }
 
+func TestFencedCodeBlockNotMathEscapesCode(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("```go\nif a < b && c > d {\n}\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `if a &lt; b &amp;&amp; c &gt; d {`) {
+		t.Fatalf("non-math fenced code was not escaped: %s", got)
+	}
+	if strings.Contains(got, `if a < b && c > d {`) {
+		t.Fatalf("non-math fenced code leaked raw HTML-sensitive characters: %s", got)
+	}
+}
+
 func TestNonMathUnaffected(t *testing.T) {
 	md := newTestRenderer()
 	src := []byte("Hello world. This has no math.\n")

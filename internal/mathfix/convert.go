@@ -26,7 +26,7 @@ var charMap = map[rune]string{
 
 	// Greek variants
 	'ϵ': `\epsilon`, 'ϑ': `\vartheta`, 'ϕ': `\varphi`, 'ϱ': `\varrho`,
-	'ϰ': `\varkappa`, 'ϖ': `\varpi`, 'ℓ': `\ell`,
+	'ϰ': `\varkappa`, 'ϖ': `\varpi`, 'ϝ': `\digamma`, 'ℓ': `\ell`,
 
 	// Math operators
 	'∀': `\forall`, '∃': `\exists`, '∈': `\in`, '∉': `\notin`,

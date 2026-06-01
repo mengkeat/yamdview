@@ -182,6 +182,10 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 				log.Printf("reloaded %s with full reset", a.cfg.MarkdownPath)
 				continue
 			}
+			if len(diff.Ops) == 0 {
+				current = diff.Snapshot
+				continue
+			}
 
 			if err := srv.BroadcastPatches(content, diff.Ops); err != nil {
 				log.Printf("warning: could not broadcast patches: %v", err)

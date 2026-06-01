@@ -128,23 +128,42 @@ func findInlineCodeRanges(text string) []codeRange {
 	var ranges []codeRange
 	i := 0
 	for i < len(text) {
-		if text[i] == '`' {
-			start := i
-			j := i + 1
-			for j < len(text) && text[j] != '`' {
-				j++
-			}
-			if j < len(text) {
-				ranges = append(ranges, codeRange{start: start, end: j + 1})
-				i = j + 1
-			} else {
-				i++
-			}
-		} else {
+		if text[i] != '`' {
 			i++
+			continue
+		}
+
+		start := i
+		markerLen := countBackticks(text[i:])
+		j := i + markerLen
+		closed := false
+		for j < len(text) {
+			if text[j] != '`' {
+				j++
+				continue
+			}
+			runLen := countBackticks(text[j:])
+			if runLen == markerLen {
+				ranges = append(ranges, codeRange{start: start, end: j + runLen})
+				i = j + runLen
+				closed = true
+				break
+			}
+			j += runLen
+		}
+		if !closed {
+			i = start + markerLen
 		}
 	}
 	return ranges
+}
+
+func countBackticks(text string) int {
+	count := 0
+	for count < len(text) && text[count] == '`' {
+		count++
+	}
+	return count
 }
 
 // inCodeRangeByte reports whether the given byte position is inside an inline
@@ -169,21 +188,20 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	runes := []rune(text)
 	n := len(runes)
 
-	// Build a set of rune positions that are inside inline code.
-	// We need to map byte-based codeRanges to rune positions.
-	codeRuneSet := make(map[int]bool)
-	bytePos := 0
-	for runeIdx, r := range text {
+	// Map byte-based code ranges to rune positions.
+	codeRunes := make([]bool, n)
+	runeIdx := 0
+	for bytePos := range text {
 		if inCodeRangeByte(bytePos, codeRanges) {
-			codeRuneSet[runeIdx] = true
+			codeRunes[runeIdx] = true
 		}
-		bytePos += len(string(r))
+		runeIdx++
 	}
 
 	// Find seed positions: Unicode math chars not inside code spans.
 	var seeds []int
 	for i, r := range runes {
-		if isUnicodeMathChar(r) && !codeRuneSet[i] {
+		if isUnicodeMathChar(r) && !codeRunes[i] {
 			seeds = append(seeds, i)
 		}
 	}
@@ -207,7 +225,7 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 		// Extend left: digits, operators, parentheses directly adjacent.
 		// Do NOT cross spaces on the left to avoid pulling in unrelated text.
 		for s > 0 {
-			if codeRuneSet[s-1] {
+			if codeRunes[s-1] {
 				break
 			}
 			r := runes[s-1]
@@ -221,7 +239,7 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 		// Extend right: allow 2-letter words directly adjacent,
 		// but only single letters across spaces.
 		for e < n {
-			if codeRuneSet[e] {
+			if codeRunes[e] {
 				break
 			}
 			r := runes[e]

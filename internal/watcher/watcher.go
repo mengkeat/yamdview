@@ -10,7 +10,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const defaultDebounce = 150 * time.Millisecond
+// DefaultDebounce is the fallback debounce duration for file reload events.
+const DefaultDebounce = 150 * time.Millisecond
 
 // Event reports that the watched file should be reloaded.
 type Event struct {
@@ -33,7 +34,7 @@ func New(path string, debounce time.Duration) (*Watcher, error) {
 	}
 	absPath = filepath.Clean(absPath)
 	if debounce <= 0 {
-		debounce = defaultDebounce
+		debounce = DefaultDebounce
 	}
 
 	fsw, err := fsnotify.NewWatcher()

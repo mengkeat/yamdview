@@ -13,6 +13,7 @@ import (
 	"github.com/yuin/goldmark"
 
 	"github.com/mengkeat/yamdview/internal/markdown"
+	"github.com/mengkeat/yamdview/internal/mdfence"
 	"github.com/mengkeat/yamdview/internal/tablefix"
 )
 
@@ -50,15 +51,12 @@ type Block struct {
 	SourceEnd   int
 	StartLine   int
 	EndLine     int
-	Source      string
-	Normalized  string
 	HTML        string
 	Diagnostics []Diagnostic
 }
 
 // DocumentSnapshot is the rendered state of one source file version.
 type DocumentSnapshot struct {
-	Source         []byte
 	Blocks         []Block
 	HTML           string
 	FullResetOnly  bool
@@ -73,6 +71,8 @@ const (
 	OpDelete       = "delete"
 	OpReset        = "reset"
 )
+
+const maxDiffMatrixCells = 250_000
 
 // PatchOp describes a single browser-side DOM update.
 type PatchOp struct {
@@ -93,7 +93,7 @@ type DiffResult struct {
 
 // BuildSnapshot segments and renders source into independently patchable blocks.
 func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
-	snapshot := DocumentSnapshot{Source: bytes.Clone(src)}
+	snapshot := DocumentSnapshot{}
 
 	if reason, ok := fullResetReason(src); ok {
 		rendered, err := markdown.Render(md, src)
@@ -116,18 +116,17 @@ func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
 			return DocumentSnapshot{}, err
 		}
 
+		normalized := normalizeSource(blockSource)
 		block := Block{
 			Kind:        span.kind,
 			SourceStart: span.start,
 			SourceEnd:   span.end,
 			StartLine:   span.startLine,
 			EndLine:     span.endLine,
-			Source:      blockSource,
-			Normalized:  normalizeSource(blockSource),
 			HTML:        rendered,
 			Diagnostics: diagnostics,
 		}
-		block.ID = blockID(i, block.Kind, block.Normalized)
+		block.ID = blockID(i, block.Kind, normalized)
 		for i := range block.Diagnostics {
 			block.Diagnostics[i].BlockID = block.ID
 		}
@@ -144,6 +143,9 @@ func Diff(oldSnapshot, nextSnapshot DocumentSnapshot) DiffResult {
 	next := nextSnapshot.clone()
 
 	if oldSnapshot.FullResetOnly || next.FullResetOnly {
+		return DiffResult{Snapshot: next, Reset: true}
+	}
+	if diffMatrixTooLarge(len(oldSnapshot.Blocks), len(next.Blocks)) {
 		return DiffResult{Snapshot: next, Reset: true}
 	}
 
@@ -250,7 +252,6 @@ func renderSourceForBlock(blockSource string, span blockSpan) (string, []Diagnos
 
 func (s DocumentSnapshot) clone() DocumentSnapshot {
 	clone := s
-	clone.Source = bytes.Clone(s.Source)
 	clone.Blocks = append([]Block(nil), s.Blocks...)
 	return clone
 }
@@ -550,38 +551,19 @@ func isThematicBreak(line []byte) bool {
 }
 
 func isFenceOpen(line []byte) bool {
-	return bytes.HasPrefix(line, []byte("```")) || bytes.HasPrefix(line, []byte("~~~"))
+	return mdfence.IsOpen(line)
 }
 
 func fenceMarker(line []byte) string {
-	if !isFenceOpen(line) {
-		return ""
-	}
-	marker := line[0]
-	count := 0
-	for count < len(line) && line[count] == marker {
-		count++
-	}
-	if count < 3 {
-		return ""
-	}
-	return strings.Repeat(string(marker), count)
+	return mdfence.Marker(line)
 }
 
 func fenceInfo(line []byte) string {
-	marker := fenceMarker(line)
-	if marker == "" {
-		return ""
-	}
-	fields := strings.Fields(strings.TrimSpace(string(line[len(marker):])))
-	if len(fields) == 0 {
-		return ""
-	}
-	return strings.ToLower(fields[0])
+	return strings.ToLower(mdfence.Info(line))
 }
 
 func isFenceClose(line []byte, marker string) bool {
-	return marker != "" && bytes.HasPrefix(line, []byte(marker))
+	return mdfence.IsClose(line, marker)
 }
 
 func isDisplayMathStart(line []byte) bool {
@@ -646,6 +628,10 @@ func lcsMatches(oldBlocks, newBlocks []Block) []diffMatch {
 		}
 	}
 	return matches
+}
+
+func diffMatrixTooLarge(oldCount, newCount int) bool {
+	return oldCount > 0 && newCount > maxDiffMatrixCells/oldCount
 }
 
 func sameBlock(a, b Block) bool {

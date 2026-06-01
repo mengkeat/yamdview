@@ -1,6 +1,7 @@
 package mathfix
 
 import (
+	"strings"
 	"unicode"
 )
 
@@ -27,6 +28,10 @@ func Score(text string) float64 {
 			continue
 		}
 		totalNonSpace++
+
+		if !isUnicodeMathChar(r) {
+			continue
+		}
 
 		switch {
 		case isMathOperator(r):
@@ -95,102 +100,56 @@ func Score(text string) float64 {
 // isUnicodeMathChar reports whether r is any Unicode math character we can
 // convert to TeX.
 func isUnicodeMathChar(r rune) bool {
-	return isMathOperator(r) || isGreekLetter(r) || isSuperscript(r) ||
-		isSubscript(r) || isBlackboardBold(r) || isMathFraction(r)
+	if r == '√' {
+		return true
+	}
+	if _, ok := charMap[r]; ok {
+		return true
+	}
+	if _, ok := superMap[r]; ok {
+		return true
+	}
+	if _, ok := subMap[r]; ok {
+		return true
+	}
+	return false
 }
 
 // isMathOperator reports whether r is a Unicode math operator or symbol.
 func isMathOperator(r rune) bool {
-	switch r {
-	case '∀', '∃', '∈', '∉', '∑', '∏', '∫', '∮',
-		'∂', '∇', '∞',
-		'≤', '≥', '≠', '≈', '∝', '∼', '≅', '≡',
-		'±', '∓', '×', '÷',
-		'→', '↦', '⇒', '⇔', '←', '↔', '↓', '↑',
-		'⊂', '⊃', '⊆', '⊇', '⊄', '⊅',
-		'∪', '∩', '∅',
-		'¬', '∧', '∨',
-		'⊕', '⊗', '⊥', '∠', '‖',
-		'·', '…',
-		'√',
-		'∘', '⋆',
-		'°', '−':
+	if r == '√' {
 		return true
-	default:
-		return false
 	}
+	return isUnicodeMathChar(r) && !isGreekLetter(r) && !isSuperscript(r) &&
+		!isSubscript(r) && !isBlackboardBold(r) && !isMathFraction(r)
 }
 
 // isGreekLetter reports whether r is a Greek letter used in math.
 func isGreekLetter(r rune) bool {
-	// Lowercase Greek: α-ω (U+03B1 to U+03C9) plus variants.
-	if r >= 'α' && r <= 'ω' {
-		return true
-	}
-	// Uppercase Greek: Α-Ω (U+0391 to U+03A9).
-	if r >= 'Α' && r <= 'Ω' {
-		return true
-	}
-	// Greek variants.
-	switch r {
-	case 'ϵ', 'ϑ', 'ϕ', 'ϱ', 'ϰ', 'ϖ', 'ϝ', 'ℓ':
-		return true
-	default:
-		return false
-	}
+	_, ok := charMap[r]
+	return ok && (unicode.In(r, unicode.Greek) || r == 'ℓ')
 }
 
 // isSuperscript reports whether r is a Unicode superscript character.
 func isSuperscript(r rune) bool {
-	// Superscript digits ⁰-⁹ (U+2070, U+00B9, U+00B2, U+00B3, U+2074-U+2079).
-	switch r {
-	case '⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹':
-		return true
-	case '⁺', '⁻', '⁼', '⁽', '⁾': // operators
-		return true
-	case 'ⁿ', 'ⁱ': // letter superscripts
-		return true
-	default:
-		return false
-	}
+	_, ok := superMap[r]
+	return ok
 }
 
 // isSubscript reports whether r is a Unicode subscript character.
 func isSubscript(r rune) bool {
-	// Subscript digits ₀-₉ (U+2080 to U+2089).
-	switch r {
-	case '₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉':
-		return true
-	case '₊', '₋', '₌', '₍', '₎': // operators
-		return true
-	case 'ₐ', 'ₑ', 'ₒ', 'ₓ', 'ₔ': // letter subscripts
-		return true
-	case 'ₕ', 'ₖ', 'ₗ', 'ₘ', 'ₙ', 'ₛ', 'ₜ': // letter subscripts h-t
-		return true
-	case 'ᵢ', 'ᵣ', 'ᵤ', 'ᵥ': // Latin subscript letters (modified small caps)
-		return true
-	default:
-		return false
-	}
+	_, ok := subMap[r]
+	return ok
 }
 
 // isBlackboardBold reports whether r is a Unicode blackboard bold character.
 func isBlackboardBold(r rune) bool {
-	switch r {
-	case 'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ', 'ℙ', '𝔽', 'ℍ':
-		return true
-	default:
-		return false
-	}
+	tex, ok := charMap[r]
+	return ok && strings.HasPrefix(tex, `\mathbb{`)
 }
 
 // isMathFraction reports whether r is a Unicode fraction character.
 func isMathFraction(r rune) bool {
-	switch r {
-	case '½', '⅓', '⅔', '¼', '¾', '⅕', '⅖', '⅗', '⅘',
-		'⅙', '⅚', '⅛', '⅜', '⅝', '⅞':
-		return true
-	default:
-		return false
-	}
+	tex, ok := charMap[r]
+	return ok && strings.HasPrefix(tex, `\frac{`)
 }

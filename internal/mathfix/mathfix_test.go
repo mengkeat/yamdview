@@ -66,15 +66,20 @@ func TestScore(t *testing.T) {
 
 func TestConvertChars(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
+		name     string
+		input    string
 		contains []string
-		omits   []string
+		omits    []string
 	}{
 		{
 			name:     "greek letters",
 			input:    "α + β = γ",
 			contains: []string{`\alpha`, `\beta`, `\gamma`},
+		},
+		{
+			name:     "greek variant digamma",
+			input:    "ϝ",
+			contains: []string{`\digamma`},
 		},
 		{
 			name:     "operators",
@@ -137,9 +142,9 @@ func TestConvertChars(t *testing.T) {
 			contains: []string{`\mathbb{R}`, `\mathbb{N}`},
 		},
 		{
-			name:   "pass through non-math",
-			input:  "hello world 123",
-			omits:  []string{`\`},
+			name:  "pass through non-math",
+			input: "hello world 123",
+			omits: []string{`\`},
 		},
 	}
 
@@ -164,11 +169,11 @@ func TestConvertChars(t *testing.T) {
 
 func TestFix(t *testing.T) {
 	tests := []struct {
-		name       string
-		input      string
-		applied    bool
-		contains   []string
-		omits      []string
+		name     string
+		input    string
+		applied  bool
+		contains []string
+		omits    []string
 	}{
 		{
 			name:    "pure math display",
@@ -238,6 +243,22 @@ func TestFix(t *testing.T) {
 			applied: false, // all Unicode math is inside backticks
 			contains: []string{
 				"`∀x ∈ ℝ`", // backtick content unchanged
+			},
+		},
+		{
+			name:    "inline code after non-ascii prefix preserved",
+			input:   "éé `α`",
+			applied: false,
+			contains: []string{
+				"éé `α`",
+			},
+		},
+		{
+			name:    "multi-backtick inline code preserved",
+			input:   "Use ``α + β`` in code",
+			applied: false,
+			contains: []string{
+				"``α + β``",
 			},
 		},
 		{
@@ -404,6 +425,14 @@ func TestPreprocessTextFenceProseUnchanged(t *testing.T) {
 	got := string(Preprocess([]byte(input)))
 	if got != input {
 		t.Errorf("plain text fence modified:\ngot:  %q\nwant: %q", got, input)
+	}
+}
+
+func TestPreprocessLongFenceKeepsShortFenceContent(t *testing.T) {
+	input := "````text\n```\n∀x ∈ ℝ\n````\n"
+	got := string(Preprocess([]byte(input)))
+	if got != input {
+		t.Fatalf("long text fence should not close on shorter fence content:\ngot:  %q\nwant: %q", got, input)
 	}
 }
 
@@ -582,10 +611,10 @@ func TestRealWorldNeuralODEBenchmark(t *testing.T) {
 	if err != nil {
 		t.Skipf("fixture not found: %v", err)
 	}
-	
+
 	result := Preprocess(data)
 	resultStr := string(result)
-	
+
 	// Log the lines that changed
 	origLines := strings.Split(string(data), "\n")
 	resLines := strings.Split(resultStr, "\n")
@@ -1830,6 +1859,8 @@ func TestHasUnicodeMathCategories(t *testing.T) {
 		{"currency dollar", "$", false},
 		{"greek variant epsilon", "ϵ", true},
 		{"greek variant phi", "ϕ", true},
+		{"greek variant digamma", "ϝ", true},
+		{"unsupported greek lookalike", "Α", false},
 		{"partial", "∂f/∂x", true},
 	}
 

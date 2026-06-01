@@ -52,9 +52,6 @@ func TestBuildSnapshotRepairsMalformedTableBlock(t *testing.T) {
 	if block.Kind != BlockTable {
 		t.Fatalf("block kind = %q, want %q", block.Kind, BlockTable)
 	}
-	if block.Source != "Name | Score\nAlice | 10\nBob | 9\n" {
-		t.Fatalf("source should remain original, got %q", block.Source)
-	}
 	if !strings.Contains(block.HTML, "<table>") || !strings.Contains(block.HTML, "<td>10</td>") {
 		t.Fatalf("malformed table was not repaired for rendering:\n%s", block.HTML)
 	}
@@ -162,6 +159,20 @@ func TestDiffDeletesBlockWithoutReset(t *testing.T) {
 	}
 	if result.Ops[0].Op != OpDelete || result.Ops[0].ID != oldSnapshot.Blocks[1].ID {
 		t.Fatalf("unexpected delete op: %+v", result.Ops[0])
+	}
+}
+
+func TestDiffFallsBackToResetForLargeBlockMatrix(t *testing.T) {
+	oldBlocks := make([]Block, 501)
+	newBlocks := make([]Block, 501)
+	for i := range oldBlocks {
+		oldBlocks[i] = Block{ID: blockID(i, BlockParagraph, "old"), Kind: BlockParagraph, HTML: "<p>old</p>\n"}
+		newBlocks[i] = Block{ID: blockID(i, BlockParagraph, "new"), Kind: BlockParagraph, HTML: "<p>new</p>\n"}
+	}
+
+	result := Diff(DocumentSnapshot{Blocks: oldBlocks}, DocumentSnapshot{Blocks: newBlocks})
+	if !result.Reset {
+		t.Fatal("expected reset when diff matrix exceeds cap")
 	}
 }
 

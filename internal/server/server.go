@@ -217,11 +217,10 @@ func (s *Server) URL() string {
 }
 
 // Start begins serving HTTP requests in a new goroutine.
-func (s *Server) Start() error {
+func (s *Server) Start() {
 	go func() {
 		_ = s.Serve()
 	}()
-	return nil
 }
 
 // Serve serves HTTP requests on the listener. It blocks until the server

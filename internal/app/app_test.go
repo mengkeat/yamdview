@@ -110,9 +110,7 @@ func startReloadLoopTest(t *testing.T, initial string) (string, *server.Server, 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	if err := srv.Start(); err != nil {
-		t.Fatal(err)
-	}
+	srv.Start()
 
 	resp, err := http.Get(srv.URL() + "events")
 	if err != nil {

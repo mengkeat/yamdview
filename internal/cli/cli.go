@@ -9,19 +9,20 @@ import (
 	"time"
 
 	"github.com/mengkeat/yamdview/internal/server"
+	"github.com/mengkeat/yamdview/internal/watcher"
 )
 
 var ErrUsage = errors.New("usage: yamdview [flags] file.md")
 
-const DefaultDebounce = 150 * time.Millisecond
+const DefaultDebounce = watcher.DefaultDebounce
 
 type Config struct {
 	MarkdownPath string
-	Addr         string   // HTTP bind address (host:port)
-	NoOpen       bool     // suppress automatic browser opening
+	Addr         string // HTTP bind address (host:port)
+	NoOpen       bool   // suppress automatic browser opening
 	Debounce     time.Duration
-	Export       string   // export standalone HTML to this path (empty = serve)
-	ExportView   string   // viewport target for export: phone, tablet, laptop, desktop
+	Export       string // export standalone HTML to this path (empty = serve)
+	ExportView   string // viewport target for export: phone, tablet, laptop, desktop
 }
 
 func Parse(args []string) (Config, error) {

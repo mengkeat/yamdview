@@ -3,6 +3,8 @@ package mathfix
 import (
 	"bytes"
 	"strings"
+
+	"github.com/mengkeat/yamdview/internal/mdfence"
 )
 
 // Preprocess takes raw Markdown source and converts Unicode math in
@@ -14,8 +16,13 @@ import (
 // modified. Fenced code blocks are preserved except for short ```text fences
 // that look like displayed equations.
 func Preprocess(src []byte) []byte {
+	if !HasUnicodeMath(string(src)) && !hasTextFenceCandidate(src) {
+		return src
+	}
+
 	lines := bytes.Split(src, []byte("\n"))
 	var result [][]byte
+	changed := false
 
 	inCodeFence := false
 	var fenceMarker string
@@ -30,6 +37,9 @@ func Preprocess(src []byte) []byte {
 		}
 		text := string(bytes.Join(paragraph, []byte("\n")))
 		fixed := fixParagraphText(text)
+		if fixed != text {
+			changed = true
+		}
 		result = append(result, []byte(fixed))
 		paragraph = nil
 	}
@@ -40,12 +50,13 @@ func Preprocess(src []byte) []byte {
 		}
 
 		last := bytes.TrimSpace(fenceLines[len(fenceLines)-1])
-		closed := isFenceClose(last, fenceMarker)
+		closed := mdfence.IsClose(last, fenceMarker)
 		if closed && isTextFenceInfo(fenceInfo) && len(fenceLines) >= 2 {
 			contentEnd := len(fenceLines) - 1
 
 			content := string(bytes.Join(fenceLines[1:contentEnd], []byte("\n")))
 			if fixed, ok := fixProbableEquationBlock(content); ok {
+				changed = true
 				result = append(result, []byte(fixed))
 				fenceLines = nil
 				return
@@ -60,17 +71,17 @@ func Preprocess(src []byte) []byte {
 		trimmed := bytes.TrimSpace(line)
 
 		// Track fenced code blocks.
-		if isFenceOpen(trimmed) && !inCodeFence {
+		if marker := mdfence.Marker(trimmed); marker != "" && !inCodeFence {
 			flush()
 			inCodeFence = true
-			fenceMarker = fenceChar(trimmed)
-			fenceInfo = fenceInfoString(trimmed)
+			fenceMarker = marker
+			fenceInfo = mdfence.Info(trimmed)
 			fenceLines = append(fenceLines, line)
 			continue
 		}
 		if inCodeFence {
 			fenceLines = append(fenceLines, line)
-			if isFenceClose(trimmed, fenceMarker) {
+			if mdfence.IsClose(trimmed, fenceMarker) {
 				flushFence()
 				inCodeFence = false
 				fenceMarker = ""
@@ -92,6 +103,9 @@ func Preprocess(src []byte) []byte {
 			flush()
 			if HasUnicodeMath(string(trimmed)) && !hasTeXDelimiters(string(trimmed)) {
 				fixed := Fix(string(trimmed))
+				if fixed.Converted != string(line) {
+					changed = true
+				}
 				result = append(result, []byte(fixed.Converted))
 			} else {
 				result = append(result, line)
@@ -107,6 +121,9 @@ func Preprocess(src []byte) []byte {
 		flushFence()
 	}
 	flush()
+	if !changed {
+		return src
+	}
 	return bytes.Join(result, []byte("\n"))
 }
 
@@ -139,49 +156,18 @@ func hasTeXDelimiters(text string) bool {
 		strings.Contains(text, `\[`)
 }
 
-// isFenceOpen reports whether a trimmed line opens a fenced code block.
-func isFenceOpen(line []byte) bool {
-	return bytes.HasPrefix(line, []byte("```")) ||
-		bytes.HasPrefix(line, []byte("~~~"))
-}
-
-// isFenceClose reports whether a trimmed line closes the current fence.
-func isFenceClose(line []byte, marker string) bool {
-	if marker == "" {
-		return false
-	}
-	return bytes.HasPrefix(line, []byte(strings.Repeat(marker, 3)))
-}
-
-// fenceChar returns the first character of a fence marker ("`" or "~").
-func fenceChar(line []byte) string {
-	if len(line) == 0 {
-		return ""
-	}
-	return string(line[0])
-}
-
-func fenceInfoString(line []byte) string {
-	s := strings.TrimSpace(string(line))
-	if len(s) == 0 {
-		return ""
-	}
-
-	marker := s[0]
-	i := 0
-	for i < len(s) && s[i] == marker {
-		i++
-	}
-
-	fields := strings.Fields(strings.TrimSpace(s[i:]))
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
-}
-
 func isTextFenceInfo(info string) bool {
 	return strings.EqualFold(info, "text") || strings.EqualFold(info, "txt")
+}
+
+func hasTextFenceCandidate(src []byte) bool {
+	for _, line := range bytes.Split(src, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if marker := mdfence.Marker(trimmed); marker != "" && isTextFenceInfo(mdfence.Info(trimmed)) {
+			return true
+		}
+	}
+	return false
 }
 
 // isStructuralLine reports whether a trimmed line is a Markdown structural

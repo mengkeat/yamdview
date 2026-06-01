@@ -91,8 +91,10 @@ func (p *inlineMathParser) Trigger() []byte {
 	return []byte{'$', '\\'}
 }
 
-var backslashOpenParen = []byte(`\(`)
-var backslashCloseParen = []byte(`\)`)
+var (
+	backslashOpenParen  = []byte(`\(`)
+	backslashCloseParen = []byte(`\)`)
+)
 
 func (p *inlineMathParser) Parse(parent gast.Node, block text.Reader, pc parser.Context) gast.Node {
 	line, segment := block.PeekLine()
@@ -359,14 +361,14 @@ func (r *mathHTMLRenderer) renderDefaultFencedCode(w util.BufWriter, source []by
 		_, _ = w.WriteString("<pre><code")
 		if lang := n.Language(source); lang != nil {
 			_, _ = w.WriteString(" class=\"language-")
-			_, _ = w.Write(lang)
+			r.Writer.Write(w, lang)
 			_, _ = w.WriteString("\"")
 		}
 		_ = w.WriteByte('>')
 		lines := n.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			seg := lines.At(i)
-			_, _ = w.Write(seg.Value(source))
+			r.Writer.RawWrite(w, seg.Value(source))
 		}
 	} else {
 		_, _ = w.WriteString("</code></pre>\n")
@@ -378,8 +380,8 @@ func (r *mathHTMLRenderer) renderDefaultFencedCode(w util.BufWriter, source []by
 
 // TeX delimiters to strip from math content.
 var (
-	dollarDelimRe     = regexp.MustCompile(`^\$+|\$+$`)
-	backslashParenRe  = regexp.MustCompile(`^\\\(|\\\)$`)
+	dollarDelimRe      = regexp.MustCompile(`^\$+|\$+$`)
+	backslashParenRe   = regexp.MustCompile(`^\\\(|\\\)$`)
 	backslashBracketRe = regexp.MustCompile(`^\\\[|\\\]$`)
 )
 
