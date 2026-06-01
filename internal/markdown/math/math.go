@@ -253,7 +253,13 @@ var displayMathContextKey = parser.NewContextKey()
 
 func (b *displayMathBlockParser) Continue(node gast.Node, reader text.Reader, pc parser.Context) parser.State {
 	line, segment := reader.PeekLine()
-	data := pc.Get(displayMathContextKey).(*displayMathData)
+	raw := pc.Get(displayMathContextKey)
+	if raw == nil {
+		// Single-line $$...$$ blocks return parser.Close from Open, but
+		// goldmark may still call Continue on them. Close immediately.
+		return parser.Close
+	}
+	data := raw.(*displayMathData)
 
 	switch data.kind {
 	case 'd':
