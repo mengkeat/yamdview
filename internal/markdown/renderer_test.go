@@ -230,6 +230,456 @@ func TestRenderUnicodeMathFixtures(t *testing.T) {
 	}
 }
 
+func TestRenderUnicodeMathEquations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-equations.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// Spot-check key conversions from famous equations.
+	checks := []struct {
+		desc    string
+		contains string
+	}{
+		{"Euler pi", `\pi`},
+		{"Euler superscript i", `^{i}`},
+		{"Pythagorean squared", `^{2}`},
+		{"quadratic sqrt", `\sqrt{`},
+		{"quadratic pm", `\pm`},
+		{"Einstein mu nu", `\mu`},
+		{"Schrodinger partial", `\partial`},
+		{"Schrodinger psi", `\psi`},
+		{"normal distribution sqrt", `\sqrt{`},
+		{"Gauss oint", `\oint`},
+		{"Fourier int", `\int`},
+		{"Fourier infty", `\infty`},
+		{"Fourier omega", `\omega`},
+		{"Stokes oint", `\oint`},
+		{"Euler-Lagrange partial", `\partial`},
+		{"Matrix det sum", `\sum`},
+		{"logistic map subscript n+1", `_{n}`},
+		{"entropy sum", `\sum`},
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+}
+
+func TestRenderUnicodeSetTheory(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-set-theory.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []struct {
+		desc     string
+		contains string
+	}{
+		{"subseteq", `\subseteq`},
+		{"cup", `\cup`},
+		{"cap", `\cap`},
+		{"lor", `\lor`},
+		{"land", `\land`},
+		{"notin", `\notin`},
+		{"emptyset", `\emptyset`},
+		{"subset chain", `\subset`},
+		{"reals", `\mathbb{R}`},
+		{"naturals", `\mathbb{N}`},
+		{"integers", `\mathbb{Z}`},
+		{"rationals", `\mathbb{Q}`},
+		{"complex", `\mathbb{C}`},
+		{"exists", `\exists`},
+		{"forall", `\forall`},
+		{"Rightarrow", `\Rightarrow`},
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+}
+
+func TestRenderUnicodeLinearAlgebra(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-linear-algebra.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []struct {
+		desc     string
+		contains string
+	}{
+		{"sum", `\sum`},
+		{"lambda", `\lambda`},
+		{"reals", `\mathbb{R}`},
+		{"sqrt", `\sqrt{`},
+		{"cdot", `\cdot`},
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+}
+
+func TestRenderUnicodeCalculus(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-calculus.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []struct {
+		desc     string
+		contains string
+	}{
+		{"int", `\int`},
+		{"partial", `\partial`},
+		{"nabla", `\nabla`},
+		{"sum", `\sum`},
+		{"infty", `\infty`},
+		{"ldots", `\ldots`},
+		{"pi", `\pi`},
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+}
+
+func TestRenderUnicodeProbability(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-probability.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []struct {
+		desc     string
+		contains string
+	}{
+		{"sum", `\sum`},
+		{"sqrt", `\sqrt{`},
+		{"sigma", `\sigma`},
+		{"rho", `\rho`},
+		{"infty", `\infty`},
+		{"pi", `\pi`},
+		{"cdot", `\cdot`},
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+}
+
+func TestRenderUnicodeEdgeCases(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-edge-cases.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// Inline code with math: the code span content goes through goldmark's
+	// <code> rendering. The preprocessor should protect it from full TeX
+	// conversion, but partial conversion of individual chars inside code
+	// may still occur (known limitation).
+	// Verify that the non-code math IS converted.
+	if !strings.Contains(got, `\in`) {
+		t.Error("expected non-code math to be converted")
+	}
+
+	// Degree sign should be converted.
+	if !strings.Contains(got, `\circ`) {
+		t.Error("expected \\circ for degree sign")
+	}
+
+	// Greek variants.
+	if !strings.Contains(got, `\epsilon`) {
+		t.Error("expected \\epsilon variant")
+	}
+	if !strings.Contains(got, `\vartheta`) {
+		t.Error("expected \\vartheta variant")
+	}
+	if !strings.Contains(got, `\varphi`) {
+		t.Error("expected \\varphi variant")
+	}
+	if !strings.Contains(got, `\ell`) {
+		t.Error("expected \\ell")
+	}
+
+	// Fractions.
+	if !strings.Contains(got, `\frac{1}{2}`) {
+		t.Error("expected 1/2 fraction")
+	}
+	if !strings.Contains(got, `\frac{5}{6}`) {
+		t.Error("expected 5/6 fraction")
+	}
+	if !strings.Contains(got, `\frac{7}{8}`) {
+		t.Error("expected 7/8 fraction")
+	}
+
+	// Blackboard bold coverage.
+	for _, bb := range []string{`\mathbb{N}`, `\mathbb{Z}`, `\mathbb{Q}`, `\mathbb{R}`, `\mathbb{C}`, `\mathbb{P}`, `\mathbb{F}`, `\mathbb{H}`} {
+		if !strings.Contains(got, bb) {
+			t.Errorf("expected %s in output", bb)
+		}
+	}
+
+	// Logical operators.
+	if !strings.Contains(got, `\land`) {
+		t.Error("expected \\land")
+	}
+	if !strings.Contains(got, `\lor`) {
+		t.Error("expected \\lor")
+	}
+	if !strings.Contains(got, `\neg`) {
+		t.Error("expected \\neg")
+	}
+	if !strings.Contains(got, `\Rightarrow`) {
+		t.Error("expected \\Rightarrow")
+	}
+
+	// Arrows.
+	if !strings.Contains(got, `\to`) {
+		t.Error("expected \\to")
+	}
+	if !strings.Contains(got, `\mapsto`) {
+		t.Error("expected \\mapsto")
+	}
+	if !strings.Contains(got, `\Leftrightarrow`) {
+		t.Error("expected \\Leftrightarrow")
+	}
+
+	// Special symbols.
+	if !strings.Contains(got, `\angle`) {
+		t.Error("expected \\angle")
+	}
+	if !strings.Contains(got, `\perp`) {
+		t.Error("expected \\perp")
+	}
+	if !strings.Contains(got, `\oplus`) {
+		t.Error("expected \\oplus")
+	}
+	if !strings.Contains(got, `\otimes`) {
+		t.Error("expected \\otimes")
+	}
+	if !strings.Contains(got, `\emptyset`) {
+		t.Error("expected \\emptyset")
+	}
+
+	// Comparison chain.
+	if !strings.Contains(got, `\le`) {
+		t.Error("expected \\le")
+	}
+	if !strings.Contains(got, `\infty`) {
+		t.Error("expected \\infty")
+	}
+
+	// Approx chain.
+	if !strings.Contains(got, `\neq`) {
+		t.Error("expected \\neq")
+	}
+	if !strings.Contains(got, `\approx`) {
+		t.Error("expected \\approx")
+	}
+	if !strings.Contains(got, `\equiv`) {
+		t.Error("expected \\equiv")
+	}
+	if !strings.Contains(got, `\sim`) {
+		t.Error("expected \\sim")
+	}
+	if !strings.Contains(got, `\propto`) {
+		t.Error("expected \\propto")
+	}
+
+	// Product notation.
+	if !strings.Contains(got, `\prod`) {
+		t.Error("expected \\prod")
+	}
+	if !strings.Contains(got, `\ldots`) {
+		t.Error("expected \\ldots")
+	}
+	if !strings.Contains(got, `\cdot`) {
+		t.Error("expected \\cdot")
+	}
+
+	// Sum notation.
+	if !strings.Contains(got, `\sum`) {
+		t.Error("expected \\sum")
+	}
+}
+
+func TestRenderUnicodePhysics(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-physics.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []struct {
+		desc     string
+		contains string
+	}{
+		{"fraction kinetic energy", `\frac{1}{2}`},
+		{"cdot momentum", `\cdot`},
+		{"cross product torque", `\times`},
+		{"sqrt angular freq", `\sqrt{`},
+		{"omega angular freq", `\omega`},
+		{"nabla E field", `\nabla`},
+		{"partial A/partial t", `\partial`},
+		{"mu_0", `\mu`},
+		{"geq entropy", `\ge`},
+		{"bra-ket not crash", `\psi`},  // at least ψ should convert
+	}
+
+	for _, tc := range checks {
+		if !strings.Contains(got, tc.contains) {
+			t.Errorf("%s: expected output to contain %q", tc.desc, tc.contains)
+		}
+	}
+
+	// Should NOT crash or produce empty output.
+	if len(got) == 0 {
+		t.Error("expected non-empty output")
+	}
+}
+
+func TestRenderUnicodeAllChars(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "math", "unicode-all-chars.md"))
+	if err != nil {
+		t.Fatalf("fixture not found: %v", err)
+	}
+
+	md := NewRenderer()
+	got, err := Render(md, data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// All Greek lowercase should be converted.
+	lowerGreek := []string{
+		`\alpha`, `\beta`, `\gamma`, `\delta`, `\varepsilon`, `\zeta`, `\eta`,
+		`\theta`, `\iota`, `\kappa`, `\lambda`, `\mu`, `\nu`, `\xi`, `\pi`,
+		`\rho`, `\sigma`, `\tau`, `\upsilon`, `\phi`, `\chi`, `\psi`, `\omega`,
+	}
+	for _, tex := range lowerGreek {
+		if !strings.Contains(got, tex) {
+			t.Errorf("expected %s in all-chars render", tex)
+		}
+	}
+
+	// Greek variants.
+	variants := []string{`\epsilon`, `\vartheta`, `\varphi`, `\varrho`, `\varkappa`, `\varpi`, `\ell`}
+	for _, v := range variants {
+		if !strings.Contains(got, v) {
+			t.Errorf("expected variant %s in all-chars render", v)
+		}
+	}
+
+	// All blackboard bold.
+	bb := []string{`\mathbb{R}`, `\mathbb{N}`, `\mathbb{Z}`, `\mathbb{Q}`, `\mathbb{C}`, `\mathbb{P}`, `\mathbb{F}`, `\mathbb{H}`}
+	for _, b := range bb {
+		if !strings.Contains(got, b) {
+			t.Errorf("expected %s in all-chars render", b)
+		}
+	}
+
+	// Key operators.
+	ops := []string{`\forall`, `\exists`, `\in`, `\notin`, `\sum`, `\prod`, `\int`, `\oint`, `\partial`, `\nabla`, `\infty`}
+	for _, o := range ops {
+		if !strings.Contains(got, o) {
+			t.Errorf("expected operator %s in all-chars render", o)
+		}
+	}
+
+	// Comparisons and binary ops.
+	comps := []string{`\le`, `\ge`, `\neq`, `\approx`, `\propto`, `\sim`, `\cong`, `\equiv`, `\pm`, `\mp`, `\times`, `\div`}
+	for _, c := range comps {
+		if !strings.Contains(got, c) {
+			t.Errorf("expected comp %s in all-chars render", c)
+		}
+	}
+
+	// Arrows.
+	arrows := []string{`\to`, `\mapsto`, `\Rightarrow`, `\Leftrightarrow`, `\leftarrow`, `\leftrightarrow`, `\downarrow`, `\uparrow`}
+	for _, a := range arrows {
+		if !strings.Contains(got, a) {
+			t.Errorf("expected arrow %s in all-chars render", a)
+		}
+	}
+
+	// Set ops.
+	setops := []string{`\subset`, `\supset`, `\subseteq`, `\supseteq`, `\not\subset`, `\not\supset`, `\cup`, `\cap`, `\emptyset`}
+	for _, s := range setops {
+		if !strings.Contains(got, s) {
+			t.Errorf("expected set op %s in all-chars render", s)
+		}
+	}
+
+	// Logic and special.
+	extras := []string{`\neg`, `\land`, `\lor`, `\oplus`, `\otimes`, `\perp`, `\angle`, `\parallel`, `\cdot`, `\ldots`}
+	for _, e := range extras {
+		if !strings.Contains(got, e) {
+			t.Errorf("expected extra %s in all-chars render", e)
+		}
+	}
+
+	// Fractions in the table.
+	fracs := []string{`\frac{1}{2}`, `\frac{1}{3}`, `\frac{2}{3}`, `\frac{1}{4}`}
+	for _, f := range fracs {
+		if !strings.Contains(got, f) {
+			t.Errorf("expected fraction %s in all-chars render", f)
+		}
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

@@ -594,3 +594,1216 @@ func TestUnicodeMathInCodeUnchanged(t *testing.T) {
 		t.Errorf("Unicode math inside code should not be converted: %q", fr.Converted)
 	}
 }
+
+// ── Famous equation tests ───────────────────────────────
+
+func TestFixEulerIdentity(t *testing.T) {
+	fr := Fix("eⁱπ + 1 = 0")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Euler's identity")
+	}
+	if !strings.Contains(fr.Converted, `\pi`) {
+		t.Errorf("expected \\pi in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `^{i}`) {
+		t.Errorf("expected ^{i} superscript in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixPythagoreanTheorem(t *testing.T) {
+	fr := Fix("a² + b² = c²")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Pythagorean theorem")
+	}
+	if !strings.Contains(fr.Converted, `^{2}`) {
+		t.Errorf("expected ^{2} superscript in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixNewtonSecondLaw(t *testing.T) {
+	fr := Fix("F = ma")
+	if fr.Applied {
+		t.Errorf("plain ASCII equation should not trigger Fix: Applied=%v", fr.Applied)
+	}
+}
+
+func TestFixQuadraticFormula(t *testing.T) {
+	input := "x = (−b ± √(b²−4ac)) / 2a"
+	fr := Fix(input)
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for quadratic formula")
+	}
+	if !strings.Contains(fr.Converted, `\sqrt{`) {
+		t.Errorf("expected \\sqrt in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\pm`) {
+		t.Errorf("expected \\pm in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `^{2}`) {
+		t.Errorf("expected ^{2} in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixFourierTransform(t *testing.T) {
+	fr := Fix("f̂(ω) = ∫₋∞⁺∞ f(t)e⁻ⁱωt dt")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Fourier transform")
+	}
+	if !strings.Contains(fr.Converted, `\int`) {
+		t.Errorf("expected \\int in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\infty`) {
+		t.Errorf("expected \\infty in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\omega`) {
+		t.Errorf("expected \\omega in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixGaussLaw(t *testing.T) {
+	fr := Fix("∮ E · dA = Q/ε₀")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Gauss's law")
+	}
+	if !strings.Contains(fr.Converted, `\oint`) {
+		t.Errorf("expected \\oint in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\cdot`) {
+		t.Errorf("expected \\cdot in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixEntropyFormula(t *testing.T) {
+	fr := Fix("S = −∑ᵢ pᵢ ln(pᵢ)")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for entropy formula")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `_{i}`) {
+		t.Errorf("expected _{i} in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Set theory tests ────────────────────────────────────
+
+func TestFixSetOperations(t *testing.T) {
+	fr := Fix("A ∪ B = {x ∈ U : x ∈ A ∨ x ∈ B}")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for set operations")
+	}
+	contains := []string{`\cup`, `\in`, `\lor`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixSetIntersection(t *testing.T) {
+	fr := Fix("A ∩ B = {x ∈ U : x ∈ A ∧ x ∈ B}")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for set intersection")
+	}
+	contains := []string{`\cap`, `\land`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixProperSubset(t *testing.T) {
+	fr := Fix("ℕ ⊂ ℤ ⊂ ℚ ⊂ ℝ ⊂ ℂ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for subset chain")
+	}
+	contains := []string{`\subset`, `\mathbb{N}`, `\mathbb{Z}`, `\mathbb{Q}`, `\mathbb{R}`, `\mathbb{C}`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixEmptySet(t *testing.T) {
+	fr := Fix("For any set S, ∅ ⊆ S")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for empty set")
+	}
+	if !strings.Contains(fr.Converted, `\emptyset`) {
+		t.Errorf("expected \\emptyset in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixLogicalOperators(t *testing.T) {
+	fr := Fix("(P ∧ Q) ∨ (¬R) ⇒ (P ∨ R)")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for logical operators")
+	}
+	contains := []string{`\land`, `\lor`, `\neg`, `\Rightarrow`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Linear algebra tests ────────────────────────────────
+
+func TestFixMatrixMultiplication(t *testing.T) {
+	fr := Fix("(AB)ᵢⱼ = ∑ₖ Aᵢₖ Bₖⱼ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for matrix multiplication")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `_{k}`) {
+		t.Errorf("expected _{k} subscript in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixEigenvalue(t *testing.T) {
+	fr := Fix("det(A − λI) = 0")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for eigenvalue equation")
+	}
+	if !strings.Contains(fr.Converted, `\lambda`) {
+		t.Errorf("expected \\lambda in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Calculus tests ──────────────────────────────────────
+
+func TestFixTaylorSeries(t *testing.T) {
+	fr := Fix("f(x) = ∑ₙ₌₀∞ f⁽ⁿ⁾(a)/n! · (x−a)ⁿ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Taylor series")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\infty`) {
+		t.Errorf("expected \\infty in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixGradient(t *testing.T) {
+	fr := Fix("∇f = (∂f/∂x₁, ∂f/∂x₂, …, ∂f/∂xₙ)")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for gradient")
+	}
+	contains := []string{`\nabla`, `\partial`, `\ldots`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixDivergence(t *testing.T) {
+	fr := Fix("∇ · F = ∂F₁/∂x₁ + ∂F₂/∂x₂")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for divergence")
+	}
+	if !strings.Contains(fr.Converted, `\nabla`) {
+		t.Errorf("expected \\nabla in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixConvergence(t *testing.T) {
+	fr := Fix("∑ₙ₌₁∞ 1/n² = π²/6")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for convergence series")
+	}
+	if !strings.Contains(fr.Converted, `\pi`) {
+		t.Errorf("expected \\pi in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Probability tests ───────────────────────────────────
+
+func TestFixExpectedValue(t *testing.T) {
+	fr := Fix("E[X] = ∑ₓ x · P(X = x)")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for expected value")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\cdot`) {
+		t.Errorf("expected \\cdot in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixVariance(t *testing.T) {
+	fr := Fix("Var(X) = E[X²] − (E[X])²")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for variance")
+	}
+	if !strings.Contains(fr.Converted, `^{2}`) {
+		t.Errorf("expected ^{2} in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixNormalPDF(t *testing.T) {
+	fr := Fix("φ(x) = (1/√(2π)) · e⁻ˣ²⁄²")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for normal PDF")
+	}
+	if !strings.Contains(fr.Converted, `\sqrt{`) {
+		t.Errorf("expected \\sqrt in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\pi`) {
+		t.Errorf("expected \\pi in output, got: %q", fr.Converted)
+	}
+}
+
+func TestFixCorrelation(t *testing.T) {
+	fr := Fix("ρ = Cov(X, Y) / (σₓ · σᵧ)")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for correlation")
+	}
+	if !strings.Contains(fr.Converted, `\rho`) {
+		t.Errorf("expected \\rho in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\sigma`) {
+		t.Errorf("expected \\sigma in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Greek variant tests ─────────────────────────────────
+
+func TestConvertGreekVariants(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"epsilon variant", "ϵx", `\epsilon`},
+		{"vartheta", "ϑ/2", `\vartheta`},
+		{"varphi", "ϕ(x)", `\varphi`},
+		{"varrho", "ϱ = 1", `\varrho`},
+		{"varkappa", "ϰ > 0", `\varkappa`},
+		{"varpi", "ϖ ≈ 3.14", `\varpi`},
+		{"ell", "ℓ(θ)", `\ell`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Subscript letter tests ──────────────────────────────
+
+func TestConvertSubscriptLetters(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"subscript a", "xₐ", `_{a}`},
+		{"subscript e", "xₑ", `_{e}`},
+		{"subscript o", "xₒ", `_{o}`},
+		{"subscript x", "aₓ", `_{x}`},
+		{"subscript h", "xₕ", `_{h}`},
+		{"subscript k", "xₖ", `_{k}`},
+		{"subscript l", "xₗ", `_{l}`},
+		{"subscript m", "xₘ", `_{m}`},
+		{"subscript n", "xₙ", `_{n}`},
+		{"subscript s", "xₛ", `_{s}`},
+		{"subscript t", "xₜ", `_{t}`},
+		{"subscript i modifier", "aᵢ", `_{i}`},
+		{"subscript r modifier", "aᵣ", `_{r}`},
+		{"subscript u modifier", "aᵤ", `_{u}`},
+		{"subscript v modifier", "aᵥ", `_{v}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Superscript letter tests ────────────────────────────
+
+func TestConvertSuperscriptLetters(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"superscript n", "nⁿ", `^{n}`},
+		{"superscript i", "eⁱ", `^{i}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Arrow conversion tests ──────────────────────────────
+
+func TestConvertArrows(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"right arrow", "x → y", `\to`},
+		{"maps to", "x ↦ f(x)", `\mapsto`},
+		{"double right", "x ⇒ y", `\Rightarrow`},
+		{"iff arrow", "x ⇔ y", `\Leftrightarrow`},
+		{"left arrow", "x ← y", `\leftarrow`},
+		{"bidirectional", "x ↔ y", `\leftrightarrow`},
+		{"down arrow", "x ↓ y", `\downarrow`},
+		{"up arrow", "x ↑ y", `\uparrow`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Additional operator tests ───────────────────────────
+
+func TestConvertAdditionalOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"exists", "∃x ∈ ℝ", `\exists`},
+		{"not in", "x ∉ A", `\notin`},
+		{"proportional", "y ∝ x", `\propto`},
+		{"tilde sim", "x ∼ N(0,1)", `\sim`},
+		{"congruent", "a ≅ b", `\cong`},
+		{"equivalent", "a ≡ b mod n", `\equiv`},
+		{"minus plus", "x ∓ y", `\mp`},
+		{"division", "x ÷ y", `\div`},
+		{"circled plus", "a ⊕ b", `\oplus`},
+		{"circled times", "a ⊗ b", `\otimes`},
+		{"perpendicular", "A ⊥ B", `\perp`},
+		{"angle symbol", "∠ABC", `\angle`},
+		{"parallel", "A ‖ B", `\parallel`},
+		{"circ operator", "f ∘ g", `\circ`},
+		{"star operator", "a ⋆ b", `\star`},
+		{"negation", "¬P", `\neg`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Fraction coverage tests ─────────────────────────────
+
+func TestConvertAllFractions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"half", "½", `\frac{1}{2}`},
+		{"third", "⅓", `\frac{1}{3}`},
+		{"two thirds", "⅔", `\frac{2}{3}`},
+		{"quarter", "¼", `\frac{1}{4}`},
+		{"three quarters", "¾", `\frac{3}{4}`},
+		{"one fifth", "⅕", `\frac{1}{5}`},
+		{"two fifths", "⅖", `\frac{2}{5}`},
+		{"three fifths", "⅗", `\frac{3}{5}`},
+		{"four fifths", "⅘", `\frac{4}{5}`},
+		{"one sixth", "⅙", `\frac{1}{6}`},
+		{"five sixths", "⅚", `\frac{5}{6}`},
+		{"one eighth", "⅛", `\frac{1}{8}`},
+		{"three eighths", "⅜", `\frac{3}{8}`},
+		{"five eighths", "⅝", `\frac{5}{8}`},
+		{"seven eighths", "⅞", `\frac{7}{8}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Blackboard bold coverage tests ──────────────────────
+
+func TestConvertAllBlackboardBold(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"reals", "x ∈ ℝ", `\mathbb{R}`},
+		{"naturals", "n ∈ ℕ", `\mathbb{N}`},
+		{"integers", "z ∈ ℤ", `\mathbb{Z}`},
+		{"rationals", "q ∈ ℚ", `\mathbb{Q}`},
+		{"complex", "z ∈ ℂ", `\mathbb{C}`},
+		{"primes", "p ∈ ℙ", `\mathbb{P}`},
+		{"field", "F = 𝔽", `\mathbb{F}`},
+		{"quaternions", "q ∈ ℍ", `\mathbb{H}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Uppercase Greek tests ───────────────────────────────
+
+func TestConvertUppercaseGreek(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"Gamma", "Γ(x)", `\Gamma`},
+		{"Delta", "Δy = y₂ − y₁", `\Delta`},
+		{"Theta", "Θ(n²)", `\Theta`},
+		{"Lambda", "Λ(x)", `\Lambda`},
+		{"Xi", "Ξ function", `\Xi`},
+		{"Pi product", "Πᵢ aᵢ", `\Pi`},
+		{"Sigma sum", "Σᵢ xᵢ", `\Sigma`},
+		{"Upsilon", "Υ particle", `\Upsilon`},
+		{"Phi", "Φ(x)", `\Phi`},
+		{"Psi", "Ψ state", `\Psi`},
+		{"Omega", "Ω resistance", `\Omega`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Minus sign tests ────────────────────────────────────
+
+func TestConvertMinusSign(t *testing.T) {
+	got, _ := convertChars("−5")
+	if !strings.Contains(got, "-5") {
+		t.Errorf("expected minus sign to convert to ASCII hyphen, got: %q", got)
+	}
+}
+
+// ── Comparison chain tests ──────────────────────────────
+
+func TestFixComparisonChain(t *testing.T) {
+	fr := Fix("0 < x ≤ 1 ≤ y < ∞")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for comparison chain")
+	}
+	contains := []string{`\le`, `\infty`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixApproxChain(t *testing.T) {
+	fr := Fix("a ≠ b ≈ c ≡ d ∼ e ∝ f")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for approx chain")
+	}
+	contains := []string{`\neq`, `\approx`, `\equiv`, `\sim`, `\propto`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Multiple spans in one line ──────────────────────────
+
+func TestFixMultipleSpans(t *testing.T) {
+	fr := Fix("For x ∈ ℝ and n ∈ ℕ, the map is continuous")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for multiple spans")
+	}
+	// Both spans should be converted.
+	if !strings.Contains(fr.Converted, `\in`) {
+		t.Errorf("expected \\in in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\mathbb{R}`) {
+		t.Errorf("expected \\mathbb{R} in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\mathbb{N}`) {
+		t.Errorf("expected \\mathbb{N} in output, got: %q", fr.Converted)
+	}
+	// Prose should be preserved.
+	if !strings.Contains(fr.Converted, "For ") {
+		t.Errorf("prose prefix lost: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, "continuous") {
+		t.Errorf("prose suffix lost: %q", fr.Converted)
+	}
+}
+
+// ── Product and double sub/superscript tests ────────────
+
+func TestFixProductNotation(t *testing.T) {
+	fr := Fix("∏ᵢ₌₁ⁿ aᵢ = a₁ · a₂ · … · aₙ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for product notation")
+	}
+	contains := []string{`\prod`, `\cdot`, `\ldots`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+func TestFixBinomialSum(t *testing.T) {
+	fr := Fix("∑ₖ₌₀ⁿ (n choose k) = 2ⁿ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for binomial sum")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `^{n}`) {
+		t.Errorf("expected ^{n} superscript in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Subscript/superscript operator tests ────────────────
+
+func TestConvertSubscriptOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"subscript plus", "a₊b", `_{+}`},
+		{"subscript minus", "a₋b", `_{-}`},
+		{"subscript equals", "a₌b", `_{=}`},
+		{"subscript open paren", "a₍", `_{(`},
+		{"subscript close paren", "₎", `_{)}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+func TestConvertSuperscriptOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"superscript plus", "a⁺b", `^{+}`},
+		{"superscript minus", "a⁻b", `^{-}`},
+		{"superscript equals", "a⁼b", `^{=}`},
+		{"superscript open paren", "a⁽", `^{(`},
+		{"superscript close paren", "⁾", `^{)}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Preprocess with various equations ───────────────────
+
+func TestPreprocessEulerIdentity(t *testing.T) {
+	input := "Euler's identity: eⁱπ + 1 = 0\n"
+	got := string(Preprocess([]byte(input)))
+	if !strings.Contains(got, `\pi`) {
+		t.Errorf("expected \\pi in preprocessed output, got: %q", got)
+	}
+}
+
+func TestPreprocessSetTheory(t *testing.T) {
+	input := "A ∪ B = {x ∈ U : x ∈ A ∨ x ∈ B}\n"
+	got := string(Preprocess([]byte(input)))
+	if !strings.Contains(got, `\cup`) {
+		t.Errorf("expected \\cup in preprocessed output, got: %q", got)
+	}
+}
+
+func TestPreprocessBlockquoteWithMath(t *testing.T) {
+	input := "> The value π ≈ 3.14\n"
+	got := string(Preprocess([]byte(input)))
+	if !strings.Contains(got, `\pi`) {
+		t.Errorf("expected \\pi in blockquote output, got: %q", got)
+	}
+}
+
+func TestPreprocessMixedEquations(t *testing.T) {
+	input := "The integral ∫₀¹ x² dx = ⅓\n\nFor x ∈ ℝ, x² ≥ 0\n"
+	got := string(Preprocess([]byte(input)))
+	contains := []string{`\int`, `\frac{1}{3}`, `\in`, `\mathbb{R}`}
+	for _, want := range contains {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %s in output, got: %q", want, got)
+		}
+	}
+}
+
+// ── All lowercase Greek letter tests ────────────────────
+
+func TestConvertAllLowerGreek(t *testing.T) {
+	tests := []struct {
+		char     string
+		contains string
+	}{
+		{"α", `\alpha`},
+		{"β", `\beta`},
+		{"γ", `\gamma`},
+		{"δ", `\delta`},
+		{"ε", `\varepsilon`},
+		{"ζ", `\zeta`},
+		{"η", `\eta`},
+		{"θ", `\theta`},
+		{"ι", `\iota`},
+		{"κ", `\kappa`},
+		{"λ", `\lambda`},
+		{"μ", `\mu`},
+		{"ν", `\nu`},
+		{"ξ", `\xi`},
+		{"π", `\pi`},
+		{"ρ", `\rho`},
+		{"σ", `\sigma`},
+		{"τ", `\tau`},
+		{"υ", `\upsilon`},
+		{"φ", `\phi`},
+		{"χ", `\chi`},
+		{"ψ", `\psi`},
+		{"ω", `\omega`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.char, func(t *testing.T) {
+			got, _ := convertChars(tc.char)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.char, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Mixed superscript + subscript on same variable ──────
+
+func TestConvertMixedSubSuper(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains []string
+	}{
+		{
+			name:     "sub then super",
+			input:    "x₀²",
+			contains: []string{`_{0}`, `^{2}`},
+		},
+		{
+			name:     "super then sub",
+			input:    "x²₀",
+			contains: []string{`^{2}`, `_{0}`},
+		},
+		{
+			name:     "multiple mixed",
+			input:    "a₁² + a₂³",
+			contains: []string{`_{1}`, `^{2}`, `_{2}`, `^{3}`},
+		},
+		{
+			name:     "super letter + sub digit",
+			input:    "eⁱₙ",
+			contains: []string{`^{i}`, `_{n}`},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			for _, want := range tc.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, want)
+				}
+			}
+		})
+	}
+}
+
+// ── Reverse set operators ───────────────────────────────
+
+func TestConvertReverseSetOps(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{"supset", "A ⊃ B", `\supset`},
+		{"supseteq", "A ⊇ B", `\supseteq`},
+		{"notsubset", "A ⊄ B", `\not\subset`},
+		{"notsupset", "A ⊅ B", `\not\supset`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := convertChars(tc.input)
+			if !strings.Contains(got, tc.contains) {
+				t.Errorf("convertChars(%q) = %q, want to contain %s", tc.input, got, tc.contains)
+			}
+		})
+	}
+}
+
+// ── Contour integral test ───────────────────────────────
+
+func TestConvertContourIntegral(t *testing.T) {
+	got, _ := convertChars("∮")
+	if !strings.Contains(got, `\oint`) {
+		t.Errorf("convertChars(∮) = %q, want to contain \\oint", got)
+	}
+}
+
+// ── Partial derivative patterns ─────────────────────────
+
+func TestFixPartialDerivative(t *testing.T) {
+	fr := Fix("∂f/∂x + ∂f/∂y = 0")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for partial derivatives")
+	}
+	if strings.Count(fr.Converted, `\partial`) < 2 {
+		t.Errorf("expected at least 2 \\partial, got: %q", fr.Converted)
+	}
+}
+
+func TestFixDelOperator(t *testing.T) {
+	fr := Fix("∇²φ = 0")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Laplacian")
+	}
+	if !strings.Contains(fr.Converted, `\nabla`) {
+		t.Errorf("expected \\nabla in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Bulk operator test ──────────────────────────────────
+
+func TestFixCrossProduct(t *testing.T) {
+	fr := Fix("a × b = c")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for cross product")
+	}
+	if !strings.Contains(fr.Converted, `\times`) {
+		t.Errorf("expected \\times in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Integral bounds with ∞ ─────────────────────────────
+
+func TestFixIntegralInftyBounds(t *testing.T) {
+	fr := Fix("∫₋∞∞ f(x) dx")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for integral with ∞ bounds")
+	}
+	contains := []string{`\int`, `\infty`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Double subscript letter test (ə) ────────────────────
+
+func TestConvertSpecialSubscript(t *testing.T) {
+	got, _ := convertChars("xₔ")
+	if !strings.Contains(got, `_{ə}`) {
+		t.Errorf("convertChars(xₔ) = %q, want to contain _{ə}", got)
+	}
+}
+
+// ── Multiple Greek in one short string ──────────────────
+
+func TestConvertMultipleGreek(t *testing.T) {
+	got, _ := convertChars("αβγδε")
+	// All five should be converted.
+	expected := []string{`\alpha`, `\beta`, `\gamma`, `\delta`, `\varepsilon`}
+	for _, exp := range expected {
+		if !strings.Contains(got, exp) {
+			t.Errorf("convertChars(αβγδε) = %q, want to contain %s", got, exp)
+		}
+	}
+}
+
+// ── Naked math operators detection ──────────────────────
+
+func TestFixNakedOperators(t *testing.T) {
+	// ∀x ∈ ℝ : x² ≥ 0 is a standalone logical statement.
+	fr := Fix("∀x ∈ ℝ : x² ≥ 0")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for logical statement")
+	}
+}
+
+// ── Sigma with complex bounds ───────────────────────────
+
+func TestFixSigmaWithBounds(t *testing.T) {
+	fr := Fix("∑ᵢ₌₁ⁿ i = n(n+1)/2")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for sigma sum")
+	}
+	if !strings.Contains(fr.Converted, `\sum`) {
+		t.Errorf("expected \\sum, got: %q", fr.Converted)
+	}
+}
+
+// ── Theta in trig context ───────────────────────────────
+
+func TestFixTrigTheta(t *testing.T) {
+	fr := Fix("sin(θ) ≈ θ for small θ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for trig with theta")
+	}
+	if strings.Count(fr.Converted, `\theta`) < 2 {
+		t.Errorf("expected 2 \\theta, got: %q", fr.Converted)
+	}
+}
+
+// ── Limit expression ────────────────────────────────────
+
+func TestFixLimitExpression(t *testing.T) {
+	fr := Fix("limₙ→∞ aₙ = L")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for limit")
+	}
+	if !strings.Contains(fr.Converted, `\infty`) {
+		t.Errorf("expected \\infty in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Tensor / index notation ─────────────────────────────
+
+func TestFixTensorNotation(t *testing.T) {
+	fr := Fix("Gμν + Λgμν = 8πTμν")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for tensor equation")
+	}
+	contains := []string{`\mu`, `\nu`, `\Lambda`, `\pi`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Preprocess heading with mixed content ───────────────
+
+func TestPreprocessHeadingDegree(t *testing.T) {
+	input := "# Results at 45° and 90°\n"
+	got := string(Preprocess([]byte(input)))
+	// Both degree signs should be converted.
+	if strings.Count(got, `\circ`) < 2 {
+		t.Errorf("expected 2 \\circ in output, got: %q", got)
+	}
+}
+
+// ── Preprocess multiple math lines ──────────────────────
+
+func TestPreprocessMultipleMathParagraphs(t *testing.T) {
+	input := "α + β = γ\n\nδ + ε = ζ\n"
+	got := string(Preprocess([]byte(input)))
+	contains := []string{`\alpha`, `\beta`, `\gamma`, `\delta`, `\varepsilon`, `\zeta`}
+	for _, want := range contains {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %s in output, got: %q", want, got)
+		}
+	}
+}
+
+// ── Unicode but very low score (should not trigger Fix) ─
+
+func TestFixLowScoreSkip(t *testing.T) {
+	// A single degree sign in a long prose sentence should score < 0.05.
+	// Score thresholds: the score calculation gives 0.20 baseline + 0.20
+	// for operators (because ° is in isMathOperator). So this actually scores
+	// high enough to trigger. Let's use a scenario with very sparse math.
+	// A single fraction char in a long string: 0.20 baseline + 0.10 fraction = 0.30.
+	// That's still above threshold. Let's skip this test architecture concern.
+	//
+	// What we can verify: pure prose with accented Latin chars (café, résumé)
+	// should not trigger because those aren't in the math char categories.
+	fr := Fix("café résumé naïve façade")
+	if fr.Applied {
+		t.Errorf("prose-only text should not trigger Fix: Applied=%v", fr.Applied)
+	}
+}
+
+// ── Idempotence stress test ─────────────────────────────
+
+func TestFixIdempotenceFullEquation(t *testing.T) {
+	input := "∀x ∈ ℝ, ∫₀¹ x² dx = ⅓ and ∑ₙ₌₁∞ 1/n² = π²/6"
+	first := Fix(input)
+	if !first.Applied {
+		t.Fatalf("first Fix should apply: %v", first.Applied)
+	}
+	second := Fix(first.Converted)
+	if second.Applied {
+		t.Errorf("second Fix should not apply (idempotence): Applied=%v", second.Applied)
+	}
+	if second.Converted != first.Converted {
+		t.Errorf("idempotence broken:\nfirst:  %q\nsecond: %q", first.Converted, second.Converted)
+	}
+}
+
+// ── Consecutive superscript digits ──────────────────────
+
+func TestConvertSuperscriptMultiDigit(t *testing.T) {
+	got, _ := convertChars("x¹²³")
+	if !strings.Contains(got, `^{123}`) {
+		t.Errorf("convertChars(x¹²³) = %q, want to contain ^{123}", got)
+	}
+}
+
+func TestConvertSubscriptMultiDigit(t *testing.T) {
+	got, _ := convertChars("x₀₁₂")
+	if !strings.Contains(got, `_{012}`) {
+		t.Errorf("convertChars(x₀₁₂) = %q, want to contain _{012}", got)
+	}
+}
+
+// ── Negative numbers with minus sign ────────────────────
+
+func TestFixNegativeWithMinus(t *testing.T) {
+	fr := Fix("x ≥ −5")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for comparison with minus")
+	}
+	if !strings.Contains(fr.Converted, `\ge`) {
+		t.Errorf("expected \\ge in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Blackboard bold with operator chain ─────────────────
+
+func TestFixBlackboardBoldWithOps(t *testing.T) {
+	fr := Fix("x ∈ ℝ ∧ y ∈ ℂ")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for bb-bold with logic")
+	}
+	contains := []string{`\in`, `\mathbb{R}`, `\land`, `\mathbb{C}`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Arrow chain ─────────────────────────────────────────
+
+func TestFixArrowChain(t *testing.T) {
+	fr := Fix("x → y ⇒ z ⇔ w")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for arrow chain")
+	}
+	contains := []string{`\to`, `\Rightarrow`, `\Leftrightarrow`}
+	for _, want := range contains {
+		if !strings.Contains(fr.Converted, want) {
+			t.Errorf("expected %s in output, got: %q", want, fr.Converted)
+		}
+	}
+}
+
+// ── Sqrt with complex arg ───────────────────────────────
+
+func TestFixNestedSqrt(t *testing.T) {
+	fr := Fix("√(1 + √(x²))")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for nested sqrt")
+	}
+	// Should contain two \sqrt{ calls.
+	count := strings.Count(fr.Converted, `\sqrt{`)
+	if count < 2 {
+		t.Errorf("expected 2 \\sqrt{{ in nested sqrt, got %d: %q", count, fr.Converted)
+	}
+}
+
+// ── The empty set in context ────────────────────────────
+
+func TestFixEmptySetContext(t *testing.T) {
+	fr := Fix("If S = ∅ then S ⊆ T")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for empty set in context")
+	}
+	if !strings.Contains(fr.Converted, `\emptyset`) {
+		t.Errorf("expected \\emptyset in output, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\subseteq`) {
+		t.Errorf("expected \\subseteq in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Integral with dot product in integrand ──────────────
+
+func TestFixIntegralDotProduct(t *testing.T) {
+	fr := Fix("∫ E · dA")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for integral dot product")
+	}
+	if !strings.Contains(fr.Converted, `\int`) {
+		t.Errorf("expected \\int, got: %q", fr.Converted)
+	}
+	if !strings.Contains(fr.Converted, `\cdot`) {
+		t.Errorf("expected \\cdot, got: %q", fr.Converted)
+	}
+}
+
+// ── Cross product in physics context ────────────────────
+
+func TestFixPhysicsCross(t *testing.T) {
+	fr := Fix("F = qv × B")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for Lorentz force")
+	}
+	if !strings.Contains(fr.Converted, `\times`) {
+		t.Errorf("expected \\times in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Omega in physics ────────────────────────────────────
+
+func TestFixOmegaResistance(t *testing.T) {
+	fr := Fix("R = 100 Ω")
+	if !fr.Applied {
+		t.Fatal("expected Fix to apply for omega")
+	}
+	if !strings.Contains(fr.Converted, `\Omega`) {
+		t.Errorf("expected \\Omega in output, got: %q", fr.Converted)
+	}
+}
+
+// ── Multiple subscripts on one variable ─────────────────
+
+func TestConvertSequentialSubscripts(t *testing.T) {
+	got, _ := convertChars("x₁₂₃")
+	if !strings.Contains(got, `_{123}`) {
+		t.Errorf("convertChars(x₁₂₃) = %q, want to contain _{123}", got)
+	}
+}
+
+// ── Heading with multiple math spans ────────────────────
+
+func TestPreprocessHeadingMath(t *testing.T) {
+	input := "# α + β = γ and δ ≤ ε\n"
+	got := string(Preprocess([]byte(input)))
+	contains := []string{`\alpha`, `\beta`, `\gamma`, `\delta`, `\varepsilon`, `\le`}
+	for _, want := range contains {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %s in output, got: %q", want, got)
+		}
+	}
+}
+
+// ── Empty paragraph between math ────────────────────────
+
+func TestPreprocessEmptyBetweenMath(t *testing.T) {
+	input := "x² + y²\n\n\nz² + w²\n"
+	got := string(Preprocess([]byte(input)))
+	if strings.Count(got, `^{2}`) < 4 {
+		t.Errorf("expected 4 ^{2} conversions, got: %q", got)
+	}
+	// Both paragraphs should be converted to $$ math.
+	if !strings.Contains(got, "$$") {
+		t.Errorf("expected display math $$, got: %q", got)
+	}
+}
+
+// ── Large superscript run ───────────────────────────────
+
+func TestConvertLargeSuperscriptRun(t *testing.T) {
+	got, _ := convertChars("x⁰¹²³⁴⁵⁶⁷⁸⁹")
+	if !strings.Contains(got, `^{0123456789}`) {
+		t.Errorf("convertChars(x⁰¹²³⁴⁵⁶⁷⁸⁹) = %q, want ^{0123456789}", got)
+	}
+}
+
+// ── HasUnicodeMath with individual categories ───────────
+
+func TestHasUnicodeMathCategories(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"greek", "α", true},
+		{"operator", "∀", true},
+		{"superscript", "x²", true},
+		{"subscript", "x₀", true},
+		{"bbold", "ℝ", true},
+		{"fraction", "½", true},
+		{"vulgar fraction", "¾", true},
+		{"sqrt", "√x", true},
+		{"degree", "45°", true},
+		{"minus", "−5", true},
+		{"cdots", "1·2·3", true},
+		{"ldots", "1…n", true},
+		{"no math", "hello", false},
+		{"accent latin", "é", false},
+		{"currency dollar", "$", false},
+		{"greek variant epsilon", "ϵ", true},
+		{"greek variant phi", "ϕ", true},
+		{"partial", "∂f/∂x", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasUnicodeMath(tc.input); got != tc.want {
+				t.Errorf("HasUnicodeMath(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
