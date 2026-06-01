@@ -150,6 +150,22 @@ func TestRenderTableRepairPreservesEscapedPipesAndCode(t *testing.T) {
 	}
 }
 
+func TestRenderValidTableWithInlineCodePipe(t *testing.T) {
+	md := NewRenderer()
+	input := "| Pattern | Meaning |\n| --- | --- |\n| `a | b` | inline code |\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if !strings.Contains(got, "<code>a | b</code>") {
+		t.Fatalf("inline code pipe was not preserved:\n%s", got)
+	}
+	if strings.Contains(got, "<td>`a</td>") {
+		t.Fatalf("inline code pipe split the table cell:\n%s", got)
+	}
+}
+
 func TestRenderAmbiguousTableStaysParagraph(t *testing.T) {
 	md := NewRenderer()
 	input := "Name | Score | Note\nAlice | 10\nBob | 9 | ok | extra\n"

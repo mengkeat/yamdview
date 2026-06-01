@@ -189,7 +189,7 @@ func repairWithSeparator(result Result, rows []row, trailing string) Result {
 		return result
 	}
 
-	if rows[1].separator && allRowsHaveColumns(rows, targetCols) {
+	if rows[1].separator && allRowsHaveColumns(rows, targetCols) && !needsCodePipeEscapes(rows) {
 		return result
 	}
 
@@ -285,6 +285,40 @@ func escapePipesInCodeSpans(cell string) string {
 		}
 	}
 	return b.String()
+}
+
+func needsCodePipeEscapes(rows []row) bool {
+	for _, row := range rows {
+		if row.separatorLike {
+			continue
+		}
+		for _, cell := range row.cells {
+			if hasUnescapedPipeInCodeSpan(cell) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasUnescapedPipeInCodeSpan(cell string) bool {
+	inCode := false
+	escaped := false
+	for _, r := range cell {
+		if r == '`' && !escaped {
+			inCode = !inCode
+			escaped = false
+			continue
+		}
+		if r == '|' && inCode && !escaped {
+			return true
+		}
+		escaped = r == '\\' && !escaped
+		if r != '\\' {
+			escaped = false
+		}
+	}
+	return false
 }
 
 func renderSeparator(b *strings.Builder, cols int, aligns []alignment) {

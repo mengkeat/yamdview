@@ -89,6 +89,19 @@ func TestEscapedPipesAndInlineCodePreserved(t *testing.T) {
 	}
 }
 
+func TestValidSeparatorTableEscapesCodePipesForGoldmark(t *testing.T) {
+	input := "| Pattern | Meaning |\n| --- | --- |\n| `a | b` | inline code |\n"
+
+	got := Fix(input)
+
+	if !got.Applied {
+		t.Fatalf("expected render repair for code pipe, diagnostics: %+v", got.Diagnostics)
+	}
+	if !strings.Contains(got.Markdown, "`a \\| b`") {
+		t.Fatalf("code pipe was not escaped for table parsing:\n%s", got.Markdown)
+	}
+}
+
 func TestPreprocessRepairsTableBlock(t *testing.T) {
 	input := "Intro\n\nName | Score\nAlice | 10\nBob | 9\n\nDone\n"
 
