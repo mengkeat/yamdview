@@ -113,7 +113,8 @@ func isMathOperator(r rune) bool {
 		'⊕', '⊗', '⊥', '∠', '‖',
 		'·', '…',
 		'√',
-		'∘', '⋆':
+		'∘', '⋆',
+		'°', '−':
 		return true
 	default:
 		return false

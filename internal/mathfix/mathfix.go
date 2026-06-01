@@ -198,14 +198,14 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	//     (e.g. "dx" in "∫₀¹ x² dx" where the 'd' is directly reachable)
 	//   - through a space: allow only single letters (word length 1)
 	//     to avoid pulling in English words like "to", "of", "in".
-	type span struct{ start, end int }
-	var rawSpans []span
+	var rawSpans []mathSpan
 
 	for _, seed := range seeds {
 		s := seed
 		e := seed + 1
 
-		// Extend left: only single letters across spaces.
+		// Extend left: digits, operators, parentheses directly adjacent.
+		// Do NOT cross spaces on the left to avoid pulling in unrelated text.
 		for s > 0 {
 			if codeRuneSet[s-1] {
 				break
@@ -220,41 +220,35 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 
 		// Extend right: allow 2-letter words directly adjacent,
 		// but only single letters across spaces.
-		spaceCrossed := false
 		for e < n {
 			if codeRuneSet[e] {
 				break
 			}
 			r := runes[e]
-			if r == ' ' && !spaceCrossed {
+			if r == ' ' {
 				// Peek past spaces to decide whether to cross.
 				j := e
 				for j < n && runes[j] == ' ' {
 					j++
 				}
 				if j < n && canExtendThroughSpace(runes[j], runes, j) {
-					spaceCrossed = true
 					e = j // skip past spaces
 					continue
 				}
 				break
 			}
-			if canExtendRight(r, runes, e, spaceCrossed) {
-				if r == ' ' {
-					// Second space crossing: stop.
-					break
-				}
+			if canExtendRight(r, runes, e) {
 				e++
 			} else {
 				break
 			}
 		}
 
-		rawSpans = append(rawSpans, span{s, e})
+		rawSpans = append(rawSpans, mathSpan{s, e})
 	}
 
 	// Merge overlapping or adjacent spans.
-	merged := make([]span, 0, len(rawSpans))
+	merged := make([]mathSpan, 0, len(rawSpans))
 	merged = append(merged, rawSpans[0])
 	for _, s := range rawSpans[1:] {
 		last := &merged[len(merged)-1]
@@ -267,7 +261,7 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 		}
 	}
 
-	// Trim leading/trailing spaces from spans.
+	// Trim leading/trailing spaces and unbalanced delimiters from spans.
 	for i := range merged {
 		for merged[i].end > merged[i].start && runes[merged[i].end-1] == ' ' {
 			merged[i].end--
@@ -275,22 +269,120 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 		for merged[i].start < merged[i].end && runes[merged[i].start] == ' ' {
 			merged[i].start++
 		}
+		// Trim unbalanced closing delimiters at the end.
+		merged[i] = trimUnbalanced(runes, merged[i])
 	}
 
 	// Convert to mathSpan.
-	result := make([]mathSpan, len(merged))
-	for i, s := range merged {
-		result[i] = mathSpan{start: s.start, end: s.end}
-	}
+	return merged
+}
 
-	return result
+// trimUnbalanced removes unbalanced parentheses, brackets, and braces from
+// the edges of a mathSpan. For example, if the span ends with ) but has no
+// matching ( inside, the trailing ) is trimmed.
+func trimUnbalanced(runes []rune, s mathSpan) mathSpan {
+	for {
+		changed := false
+		if s.end > s.start {
+			ch := runes[s.end-1]
+			if ch == ')' || ch == ']' || ch == '}' {
+				if !hasBalancedPair(runes, s.start, s.end, ch) {
+					s.end--
+					// Also trim any trailing space revealed.
+					for s.end > s.start && runes[s.end-1] == ' ' {
+						s.end--
+					}
+					changed = true
+				}
+			}
+		}
+		if s.start < s.end {
+			ch := runes[s.start]
+			if ch == '(' || ch == '[' || ch == '{' {
+				closing := matchOpening(ch)
+				if !hasBalancedPairForward(runes, s.start, s.end, closing) {
+					s.start++
+					for s.start < s.end && runes[s.start] == ' ' {
+						s.start++
+					}
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return s
+}
+
+// hasBalancedPair checks if there's a matching opening delimiter inside the
+// span for the closing delimiter at the end.
+func hasBalancedPair(runes []rune, start, end int, closing rune) bool {
+	opening := matchClosing(closing)
+	depth := 1
+	for i := end - 2; i >= start; i-- {
+		if runes[i] == closing {
+			depth++
+		} else if runes[i] == opening {
+			depth--
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasBalancedPairForward checks if there's a matching closing delimiter inside
+// the span for the opening delimiter at the start.
+func hasBalancedPairForward(runes []rune, start, end int, closing rune) bool {
+	opening := runes[start]
+	depth := 1
+	for i := start + 1; i < end; i++ {
+		if runes[i] == opening {
+			depth++
+		} else if runes[i] == closing {
+			depth--
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchClosing(closing rune) rune {
+	switch closing {
+	case ')':
+		return '('
+	case ']':
+		return '['
+	case '}':
+		return '{'
+	}
+	return closing
+}
+
+func matchOpening(opening rune) rune {
+	switch opening {
+	case '(':
+		return ')'
+	case '[':
+		return ']'
+	case '{':
+		return '}'
+	}
+	return opening
 }
 
 // canExtendLeft reports whether the character at position pos can be included
-// in a math span when extending left. Conservative: only single letters
-// allowed (avoids pulling in "to", "of", "in" from across spaces).
+// in a math span when extending left. Does not cross spaces to avoid pulling
+// in unrelated text (e.g. "0.551" from "0.551 m/s²").
 func canExtendLeft(r rune, runes []rune, pos int) bool {
 	switch {
+	case isUnicodeMathChar(r):
+		return true
 	case r >= '0' && r <= '9':
 		return true
 	case isASCIIAlpha(r):
@@ -299,7 +391,7 @@ func canExtendLeft(r rune, runes []rune, pos int) bool {
 		return true
 	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
 		return true
-	case r == ',' || r == '/' || r == ' ':
+	case r == ',' || r == '/' || r == '.':
 		return true
 	case r == '^' || r == '_':
 		return true
@@ -310,16 +402,14 @@ func canExtendLeft(r rune, runes []rune, pos int) bool {
 // canExtendRight reports whether character at position pos can be included when
 // extending right. If spaceCrossed is true, only single letters are allowed;
 // otherwise 2-letter words are also accepted for cases like "dx".
-func canExtendRight(r rune, runes []rune, pos int, spaceCrossed bool) bool {
+func canExtendRight(r rune, runes []rune, pos int) bool {
 	switch {
+	case isUnicodeMathChar(r):
+		return true
 	case r >= '0' && r <= '9':
 		return true
 	case isASCIIAlpha(r):
-		maxLen := 2
-		if spaceCrossed {
-			maxLen = 1
-		}
-		return wordLengthAt(runes, pos) <= maxLen
+		return wordLengthAt(runes, pos) <= 2
 	case r == '+' || r == '-' || r == '=' || r == '<' || r == '>' || r == '*':
 		return true
 	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
@@ -333,19 +423,24 @@ func canExtendRight(r rune, runes []rune, pos int, spaceCrossed bool) bool {
 }
 
 // canExtendThroughSpace reports whether the first non-space character after
-// a space gap can be included in a math span.
+// a space gap can be included in a math span. This is the gatekeeper for
+// crossing spaces — it should only allow crossing when the content after
+// the space looks math-like.
 func canExtendThroughSpace(r rune, runes []rune, pos int) bool {
 	switch {
 	case isUnicodeMathChar(r):
 		return true
 	case r >= '0' && r <= '9':
 		return true
-	case isASCIIAlpha(r):
-		return wordLengthAt(runes, pos) <= 2
 	case r == '+' || r == '-' || r == '=' || r == '<' || r == '>' || r == '*':
 		return true
 	case r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}':
 		return true
+	case isASCIIAlpha(r):
+		// Only single letters after a space: likely variable names (x, n, i).
+		// Do not allow 2+ letter words through spaces — they are almost
+		// always English words like "in", "of", "to", "dx".
+		return wordLengthAt(runes, pos) <= 1
 	}
 	return false
 }

@@ -34,6 +34,9 @@ var charMap = map[rune]string{
 	'∂': `\partial`, '∇': `\nabla`, '∞': `\infty`,
 	'≤': `\le`, '≥': `\ge`, '≠': `\neq`, '≈': `\approx`,
 	'∝': `\propto`, '∼': `\sim`, '≅': `\cong`, '≡': `\equiv`,
+	// Operators and symbols
+	'°': `{}^\circ`,
+	'−': `-`,
 	'±': `\pm`, '∓': `\mp`, '×': `\times`, '÷': `\div`,
 	'→': `\to`, '↦': `\mapsto`, '⇒': `\Rightarrow`, '⇔': `\Leftrightarrow`,
 	'←': `\leftarrow`, '↔': `\leftrightarrow`, '↓': `\downarrow`, '↑': `\uparrow`,

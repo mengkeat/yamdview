@@ -1,6 +1,8 @@
 package mathfix
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -538,5 +540,57 @@ func TestConvertCharsSpacing(t *testing.T) {
 				t.Errorf("convertChars(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRealWorldNeuralODEBenchmark(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "code", "BallFlight", "experiments", "research-log", "2026-04-28-neural-ode-benchmark.md"))
+	if err != nil {
+		t.Skipf("fixture not found: %v", err)
+	}
+	
+	result := Preprocess(data)
+	resultStr := string(result)
+	
+	// Log the lines that changed
+	origLines := strings.Split(string(data), "\n")
+	resLines := strings.Split(resultStr, "\n")
+	for i := 0; i < len(origLines) && i < len(resLines); i++ {
+		if origLines[i] != resLines[i] {
+			t.Logf("Line %d changed:", i+1)
+			t.Logf("  FROM: %q", origLines[i])
+			t.Logf("  TO:   %q", resLines[i])
+		}
+	}
+}
+
+func TestDegreeSignConversion(t *testing.T) {
+	fr := Fix("Axis err (°)")
+	if !fr.Applied {
+		t.Fatal("expected degree sign to be converted")
+	}
+	if !strings.Contains(fr.Converted, `\circ`) {
+		t.Errorf("expected \\circ in output, got: %q", fr.Converted)
+	}
+}
+
+func TestDegreeSignInline(t *testing.T) {
+	fr := Fix("error is ~22°, while")
+	if !fr.Applied {
+		t.Fatal("expected degree sign to be converted")
+	}
+	if !strings.Contains(fr.Converted, `\circ`) {
+		t.Errorf("expected \\circ in output, got: %q", fr.Converted)
+	}
+	// The span should be "22°," — "while" should be outside the math delimiters.
+	if strings.Contains(fr.Converted, "$while$") {
+		t.Errorf("span extended too far, included 'while' inside math: %q", fr.Converted)
+	}
+}
+
+func TestUnicodeMathInCodeUnchanged(t *testing.T) {
+	fr := Fix("`N ≤ 100`")
+	if fr.Applied {
+		t.Errorf("Unicode math inside code should not be converted: %q", fr.Converted)
 	}
 }
