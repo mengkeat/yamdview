@@ -588,38 +588,6 @@ func isDisplayMathStart(line []byte) bool {
 	return bytes.HasPrefix(line, []byte("$$")) || bytes.HasPrefix(line, []byte(`\[`))
 }
 
-func isPipeTableStart(lines []line, i int) bool {
-	if i+1 >= len(lines) {
-		return false
-	}
-	current := trimLine(lines[i].text)
-	next := trimLine(lines[i+1].text)
-	return bytes.Contains(current, []byte("|")) && isPipeTableSeparator(next)
-}
-
-func isPipeTableSeparator(line []byte) bool {
-	if !bytes.Contains(line, []byte("-")) {
-		return false
-	}
-	for _, b := range line {
-		switch b {
-		case '|', ':', '-', ' ', '\t':
-		default:
-			return false
-		}
-	}
-	cells := strings.Split(strings.Trim(string(line), "|"), "|")
-	if len(cells) == 0 {
-		return false
-	}
-	for _, cell := range cells {
-		if strings.Count(cell, "-") < 3 {
-			return false
-		}
-	}
-	return true
-}
-
 func isListMarker(line []byte) bool {
 	if len(line) < 2 {
 		return false
