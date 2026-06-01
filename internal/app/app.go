@@ -17,6 +17,7 @@ import (
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
+	"github.com/mengkeat/yamdview/web"
 )
 
 // Config holds the application configuration.
@@ -89,7 +90,7 @@ func (a *App) serve() error {
 	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
 		Title:   a.cfg.MarkdownPath,
 		Content: content,
-	})
+	}, server.WithKatexFS(web.KatexFS()))
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}

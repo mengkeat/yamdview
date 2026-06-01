@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -81,6 +83,14 @@ func PageDataFromAssets(assets Assets, title string, content template.HTML) Page
 	return pd
 }
 
+// ClientError represents a client-side render error reported by the browser.
+type ClientError struct {
+	BlockID string `json:"block_id"`
+	Kind    string `json:"kind"`    // "math", "table", etc.
+	Message string `json:"message"`
+	TeX     string `json:"tex"`     // original TeX for math errors
+}
+
 // Server is the local HTTP server for the Markdown viewer.
 type Server struct {
 	listener net.Listener
@@ -88,9 +98,12 @@ type Server struct {
 	mu       sync.RWMutex
 	pageData PageData
 	tmpl     *template.Template
+	katexFS  fs.FS
 
 	clientsMu sync.Mutex
 	clients   map[chan sseEvent]struct{}
+
+	onClientError func(ClientError)
 }
 
 type sseEvent struct {
@@ -103,9 +116,24 @@ type resetPayload struct {
 	HTML string `json:"html"`
 }
 
+// Option configures a Server during construction.
+type Option func(*Server)
+
+// WithKatexFS configures the server to serve KaTeX static assets from the
+// given filesystem (rooted at the katex distribution directory).
+func WithKatexFS(fsys fs.FS) Option {
+	return func(s *Server) { s.katexFS = fsys }
+}
+
+// WithClientErrorHandler registers a callback for client-side render errors
+// reported via POST /client-error.
+func WithClientErrorHandler(fn func(ClientError)) Option {
+	return func(s *Server) { s.onClientError = fn }
+}
+
 // New creates a new Server that will listen on the given address.
 // If addr is empty it defaults to "127.0.0.1:0" (random available port).
-func New(addr string, assets Assets, data PageData) (*Server, error) {
+func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
 	}
@@ -132,6 +160,10 @@ func New(addr string, assets Assets, data PageData) (*Server, error) {
 		clients:  make(map[chan sseEvent]struct{}),
 	}
 
+	for _, opt := range opts {
+		opt(s)
+	}
+
 	// Serve the viewer page at /.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -150,6 +182,15 @@ func New(addr string, assets Assets, data PageData) (*Server, error) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, s.currentPageData().Content)
 	})
+
+	// KaTeX static assets at /katex/.
+	if s.katexFS != nil {
+		katexHandler := http.FileServer(http.FS(s.katexFS))
+		mux.Handle("/katex/", http.StripPrefix("/katex/", katexHandler))
+	}
+
+	// Client error reporting endpoint.
+	mux.HandleFunc("/client-error", s.handleClientError)
 
 	// Events endpoint streams live reload messages to the browser.
 	mux.HandleFunc("/events", s.handleEvents)
@@ -273,6 +314,29 @@ func writeSSE(w http.ResponseWriter, event sseEvent) {
 		fmt.Fprintf(w, "data: %s\n", line)
 	}
 	fmt.Fprint(w, "\n")
+}
+
+func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var errs []ClientError
+	if err := json.NewDecoder(r.Body).Decode(&errs); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, "ok")
+
+	for _, ce := range errs {
+		log.Printf("client error: block=%s kind=%s msg=%s", ce.BlockID, ce.Kind, ce.Message)
+		if s.onClientError != nil {
+			s.onClientError(ce)
+		}
+	}
 }
 
 // RenderPage renders the page template to a byte slice using the given assets.
