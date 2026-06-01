@@ -10,18 +10,17 @@ import (
 // be passed directly to goldmark for rendering.
 //
 // Lines already containing TeX math delimiters ($, $$, \(, \[) are left
-// unchanged, ensuring idempotence. Content inside fenced code blocks and
-// inline code spans is never modified.
+// unchanged, ensuring idempotence. Content inside inline code spans is never
+// modified. Fenced code blocks are preserved except for short ```text fences
+// that look like displayed equations.
 func Preprocess(src []byte) []byte {
-	if !HasUnicodeMath(string(src)) {
-		return src
-	}
-
 	lines := bytes.Split(src, []byte("\n"))
 	var result [][]byte
 
 	inCodeFence := false
 	var fenceMarker string
+	var fenceInfo string
+	var fenceLines [][]byte
 
 	var paragraph [][]byte // accumulates non-code, non-blank lines
 
@@ -35,6 +34,28 @@ func Preprocess(src []byte) []byte {
 		paragraph = nil
 	}
 
+	flushFence := func() {
+		if len(fenceLines) == 0 {
+			return
+		}
+
+		last := bytes.TrimSpace(fenceLines[len(fenceLines)-1])
+		closed := isFenceClose(last, fenceMarker)
+		if closed && isTextFenceInfo(fenceInfo) && len(fenceLines) >= 2 {
+			contentEnd := len(fenceLines) - 1
+
+			content := string(bytes.Join(fenceLines[1:contentEnd], []byte("\n")))
+			if fixed, ok := fixProbableEquationBlock(content); ok {
+				result = append(result, []byte(fixed))
+				fenceLines = nil
+				return
+			}
+		}
+
+		result = append(result, fenceLines...)
+		fenceLines = nil
+	}
+
 	for _, line := range lines {
 		trimmed := bytes.TrimSpace(line)
 
@@ -43,17 +64,18 @@ func Preprocess(src []byte) []byte {
 			flush()
 			inCodeFence = true
 			fenceMarker = fenceChar(trimmed)
-			result = append(result, line)
-			continue
-		}
-		if inCodeFence && isFenceClose(trimmed, fenceMarker) {
-			inCodeFence = false
-			fenceMarker = ""
-			result = append(result, line)
+			fenceInfo = fenceInfoString(trimmed)
+			fenceLines = append(fenceLines, line)
 			continue
 		}
 		if inCodeFence {
-			result = append(result, line)
+			fenceLines = append(fenceLines, line)
+			if isFenceClose(trimmed, fenceMarker) {
+				flushFence()
+				inCodeFence = false
+				fenceMarker = ""
+				fenceInfo = ""
+			}
 			continue
 		}
 
@@ -81,6 +103,9 @@ func Preprocess(src []byte) []byte {
 		paragraph = append(paragraph, line)
 	}
 
+	if inCodeFence {
+		flushFence()
+	}
 	flush()
 	return bytes.Join(result, []byte("\n"))
 }
@@ -134,6 +159,29 @@ func fenceChar(line []byte) string {
 		return ""
 	}
 	return string(line[0])
+}
+
+func fenceInfoString(line []byte) string {
+	s := strings.TrimSpace(string(line))
+	if len(s) == 0 {
+		return ""
+	}
+
+	marker := s[0]
+	i := 0
+	for i < len(s) && s[i] == marker {
+		i++
+	}
+
+	fields := strings.Fields(strings.TrimSpace(s[i:]))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func isTextFenceInfo(info string) bool {
+	return strings.EqualFold(info, "text") || strings.EqualFold(info, "txt")
 }
 
 // isStructuralLine reports whether a trimmed line is a Markdown structural
