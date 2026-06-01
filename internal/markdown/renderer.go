@@ -9,6 +9,7 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/markdown/math"
 	"github.com/mengkeat/yamdview/internal/mathfix"
+	"github.com/mengkeat/yamdview/internal/tablefix"
 )
 
 // NewRenderer creates a goldmark instance configured with sensible defaults
@@ -26,10 +27,14 @@ func NewRenderer() goldmark.Markdown {
 }
 
 // Render converts Markdown source bytes to an HTML string.
-// It preprocesses Unicode math notation into TeX-delimited form before
-// passing the source to goldmark, so that KaTeX rendering picks it up.
-// The original source bytes are not modified.
+// It preprocesses deterministic render-only repairs (tables, then Unicode
+// math notation) before passing the source to goldmark. The original source
+// bytes are not modified.
 func Render(md goldmark.Markdown, src []byte) (string, error) {
+	// Repair obvious malformed pipe tables before math conversion so the table
+	// structure is available to goldmark's table extension.
+	src = tablefix.Preprocess(src)
+
 	// Convert Unicode math to TeX notation (render-only).
 	src = mathfix.Preprocess(src)
 

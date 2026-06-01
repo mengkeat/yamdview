@@ -13,6 +13,7 @@ import (
 	"github.com/yuin/goldmark"
 
 	"github.com/mengkeat/yamdview/internal/markdown"
+	"github.com/mengkeat/yamdview/internal/tablefix"
 )
 
 // BlockKind identifies a top-level Markdown block category.
@@ -109,7 +110,8 @@ func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
 	snapshot.Blocks = make([]Block, 0, len(spans))
 	for i, span := range spans {
 		blockSource := string(src[span.start:span.end])
-		rendered, err := markdown.Render(md, []byte(blockSource))
+		renderSource, diagnostics := renderSourceForBlock(blockSource, span)
+		rendered, err := markdown.Render(md, []byte(renderSource))
 		if err != nil {
 			return DocumentSnapshot{}, err
 		}
@@ -123,8 +125,12 @@ func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
 			Source:      blockSource,
 			Normalized:  normalizeSource(blockSource),
 			HTML:        rendered,
+			Diagnostics: diagnostics,
 		}
 		block.ID = blockID(i, block.Kind, block.Normalized)
+		for i := range block.Diagnostics {
+			block.Diagnostics[i].BlockID = block.ID
+		}
 		snapshot.Blocks = append(snapshot.Blocks, block)
 	}
 
@@ -186,8 +192,60 @@ func (b Block) WrappedHTML() string {
 	if b.HTML != "" && !strings.HasSuffix(b.HTML, "\n") {
 		out.WriteByte('\n')
 	}
+	if len(b.Diagnostics) > 0 {
+		b.writeDiagnostics(&out)
+	}
 	out.WriteString("</section>\n")
 	return out.String()
+}
+
+func (b Block) writeDiagnostics(out *strings.Builder) {
+	out.WriteString(`<div class="diagnostics" role="note" aria-label="Diagnostics">`)
+	out.WriteByte('\n')
+	for _, diag := range b.Diagnostics {
+		severity := diag.Severity
+		if severity == "" {
+			severity = "warning"
+		}
+		out.WriteString(`<div class="diagnostic diagnostic-`)
+		out.WriteString(html.EscapeString(severity))
+		out.WriteString(`">`)
+		out.WriteString(`<span class="diagnostic-code">`)
+		out.WriteString(html.EscapeString(diag.Code))
+		out.WriteString(`</span>`)
+		if diag.Message != "" {
+			out.WriteString(`: `)
+			out.WriteString(html.EscapeString(diag.Message))
+		}
+		out.WriteString(`</div>`)
+		out.WriteByte('\n')
+	}
+	out.WriteString(`</div>`)
+	out.WriteByte('\n')
+}
+
+func renderSourceForBlock(blockSource string, span blockSpan) (string, []Diagnostic) {
+	if span.kind != BlockTable {
+		return blockSource, nil
+	}
+
+	result := tablefix.Fix(blockSource)
+	if !result.TableLike {
+		return blockSource, nil
+	}
+
+	diagnostics := make([]Diagnostic, 0, len(result.Diagnostics))
+	for _, diag := range result.Diagnostics {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity:  diag.Severity,
+			Code:      diag.Code,
+			Message:   diag.Message,
+			StartLine: span.startLine,
+			EndLine:   span.endLine,
+		})
+	}
+
+	return result.Markdown, diagnostics
 }
 
 func (s DocumentSnapshot) clone() DocumentSnapshot {
@@ -327,7 +385,7 @@ func classifyStart(lines []line, i int) BlockKind {
 	if isThematicBreak(trimmed) {
 		return BlockThematicBreak
 	}
-	if isPipeTableStart(lines, i) {
+	if isTableLikeStart(lines, i) {
 		return BlockTable
 	}
 	if bytes.HasPrefix(trimmed, []byte(">")) {
@@ -393,12 +451,19 @@ func consumeTable(lines []line, i int) int {
 	j := i + 2
 	for j < len(lines) {
 		trimmed := trimLine(lines[j].text)
-		if isBlank(lines[j].text) || !bytes.Contains(trimmed, []byte("|")) {
+		if isBlank(lines[j].text) || !tablefix.LooksLikeTableContinuation(string(trimmed)) {
 			break
 		}
 		j++
 	}
 	return j
+}
+
+func isTableLikeStart(lines []line, i int) bool {
+	if i+1 >= len(lines) {
+		return false
+	}
+	return tablefix.LooksLikeTableStart(string(trimLine(lines[i].text)), string(trimLine(lines[i+1].text)))
 }
 
 func consumeUntilBlank(lines []line, i int) int {
@@ -616,7 +681,23 @@ func lcsMatches(oldBlocks, newBlocks []Block) []diffMatch {
 }
 
 func sameBlock(a, b Block) bool {
-	return a.Kind == b.Kind && a.HTML == b.HTML
+	return a.Kind == b.Kind && a.HTML == b.HTML && sameDiagnostics(a.Diagnostics, b.Diagnostics)
+}
+
+func sameDiagnostics(a, b []Diagnostic) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Severity != b[i].Severity ||
+			a[i].Code != b[i].Code ||
+			a[i].Message != b[i].Message ||
+			a[i].StartLine != b[i].StartLine ||
+			a[i].EndLine != b[i].EndLine {
+			return false
+		}
+	}
+	return true
 }
 
 func patchOps(oldBlocks, newBlocks []Block, matches []diffMatch) ([]PatchOp, bool) {

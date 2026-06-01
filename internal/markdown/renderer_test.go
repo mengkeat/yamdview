@@ -116,6 +116,56 @@ func TestRenderUnicodeMathConverted(t *testing.T) {
 	}
 }
 
+func TestRenderRepairsMalformedPipeTable(t *testing.T) {
+	md := NewRenderer()
+	got, err := Render(md, []byte("Name | Score\nAlice | 10\nBob | 9\n"))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []string{"<table>", "<th>Name</th>", "<td>10</td>", "<td>9</td>"}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered table missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Name | Score") {
+		t.Fatalf("malformed table rendered as paragraph:\n%s", got)
+	}
+}
+
+func TestRenderTableRepairPreservesEscapedPipesAndCode(t *testing.T) {
+	md := NewRenderer()
+	input := "Pattern | Meaning\n`a | b` | inline code\nx \\| y | escaped pipe\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []string{"<table>", "<code>a | b</code>", "x | y"}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered table missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderAmbiguousTableStaysParagraph(t *testing.T) {
+	md := NewRenderer()
+	input := "Name | Score | Note\nAlice | 10\nBob | 9 | ok | extra\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if strings.Contains(got, "<table>") {
+		t.Fatalf("ambiguous table should not render as a table:\n%s", got)
+	}
+	if !strings.Contains(got, "Name | Score | Note") {
+		t.Fatalf("ambiguous table source not preserved:\n%s", got)
+	}
+}
+
 func TestRenderUnicodeMathFraction(t *testing.T) {
 	md := NewRenderer()
 	got, err := Render(md, []byte("The result is ½ of the total.\n"))
@@ -263,7 +313,7 @@ func TestRenderUnicodeMathEquations(t *testing.T) {
 
 	// Spot-check key conversions from famous equations.
 	checks := []struct {
-		desc    string
+		desc     string
 		contains string
 	}{
 		{"Euler pi", `\pi`},
@@ -595,7 +645,7 @@ func TestRenderUnicodePhysics(t *testing.T) {
 		{"partial A/partial t", `\partial`},
 		{"mu_0", `\mu`},
 		{"geq entropy", `\ge`},
-		{"bra-ket not crash", `\psi`},  // at least ψ should convert
+		{"bra-ket not crash", `\psi`}, // at least ψ should convert
 	}
 
 	for _, tc := range checks {

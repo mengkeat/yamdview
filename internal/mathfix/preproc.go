@@ -220,5 +220,10 @@ func isStructuralLine(line []byte) bool {
 	if bytes.HasPrefix(line, []byte("<")) {
 		return true
 	}
+	// Pipe table row. Handle row-by-row so math conversion does not merge
+	// table syntax across lines.
+	if bytes.Contains(line, []byte("|")) {
+		return true
+	}
 	return false
 }

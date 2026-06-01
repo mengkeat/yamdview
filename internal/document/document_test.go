@@ -42,6 +42,52 @@ func TestBuildSnapshotSegmentsAndWrapsBlocks(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshotRepairsMalformedTableBlock(t *testing.T) {
+	snapshot := mustSnapshot(t, "Name | Score\nAlice | 10\nBob | 9\n")
+
+	if len(snapshot.Blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(snapshot.Blocks))
+	}
+	block := snapshot.Blocks[0]
+	if block.Kind != BlockTable {
+		t.Fatalf("block kind = %q, want %q", block.Kind, BlockTable)
+	}
+	if block.Source != "Name | Score\nAlice | 10\nBob | 9\n" {
+		t.Fatalf("source should remain original, got %q", block.Source)
+	}
+	if !strings.Contains(block.HTML, "<table>") || !strings.Contains(block.HTML, "<td>10</td>") {
+		t.Fatalf("malformed table was not repaired for rendering:\n%s", block.HTML)
+	}
+	if len(block.Diagnostics) != 0 {
+		t.Fatalf("obvious table should not produce diagnostics: %+v", block.Diagnostics)
+	}
+}
+
+func TestBuildSnapshotDiagnosesAmbiguousTableBlock(t *testing.T) {
+	snapshot := mustSnapshot(t, "Name | Score | Note\nAlice | 10\nBob | 9 | ok | extra\n")
+
+	if len(snapshot.Blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(snapshot.Blocks))
+	}
+	block := snapshot.Blocks[0]
+	if block.Kind != BlockTable {
+		t.Fatalf("block kind = %q, want %q", block.Kind, BlockTable)
+	}
+	if strings.Contains(block.HTML, "<table>") {
+		t.Fatalf("ambiguous table should not be repaired:\n%s", block.HTML)
+	}
+	if len(block.Diagnostics) != 1 {
+		t.Fatalf("expected one diagnostic, got %+v", block.Diagnostics)
+	}
+	diag := block.Diagnostics[0]
+	if diag.Code != "table.ambiguous" || diag.BlockID != block.ID || diag.StartLine != 1 || diag.EndLine != 3 {
+		t.Fatalf("unexpected diagnostic: %+v", diag)
+	}
+	if !strings.Contains(block.WrappedHTML(), "diagnostic-code") || !strings.Contains(block.WrappedHTML(), "table.ambiguous") {
+		t.Fatalf("wrapped HTML missing diagnostic badge:\n%s", block.WrappedHTML())
+	}
+}
+
 func TestDiffReplacesOneChangedParagraph(t *testing.T) {
 	oldSnapshot := mustSnapshot(t, "# Title\n\nOriginal paragraph.\n\nTail paragraph.\n")
 	newSnapshot := mustSnapshot(t, "# Title\n\nUpdated paragraph.\n\nTail paragraph.\n")
