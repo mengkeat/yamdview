@@ -82,7 +82,7 @@ func TestEscapedPipesAndInlineCodePreserved(t *testing.T) {
 	if !got.Applied {
 		t.Fatalf("expected repair, diagnostics: %+v", got.Diagnostics)
 	}
-	for _, want := range []string{"`a | b`", "x \\| y"} {
+	for _, want := range []string{"`a \\| b`", "x \\| y"} {
 		if !strings.Contains(got.Markdown, want) {
 			t.Fatalf("repaired table lost %q:\n%s", want, got.Markdown)
 		}

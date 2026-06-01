@@ -255,10 +255,36 @@ func renderDataRow(b *strings.Builder, cells []string) {
 	b.WriteString("|")
 	for _, cell := range cells {
 		b.WriteByte(' ')
-		b.WriteString(strings.TrimSpace(cell))
+		b.WriteString(escapePipesInCodeSpans(strings.TrimSpace(cell)))
 		b.WriteString(" |")
 	}
 	b.WriteByte('\n')
+}
+
+func escapePipesInCodeSpans(cell string) string {
+	var b strings.Builder
+	inCode := false
+	escaped := false
+	for _, r := range cell {
+		if r == '`' && !escaped {
+			inCode = !inCode
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '|' && inCode && !escaped {
+			b.WriteRune('\\')
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		b.WriteRune(r)
+		escaped = r == '\\' && !escaped
+		if r != '\\' {
+			escaped = false
+		}
+	}
+	return b.String()
 }
 
 func renderSeparator(b *strings.Builder, cols int, aligns []alignment) {
