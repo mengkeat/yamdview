@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/server"
 )
 
@@ -227,6 +228,94 @@ func TestBroadcastResetSendsSSEAndUpdatesSnapshot(t *testing.T) {
 	}
 }
 
+func TestBroadcastPatchesSendsSSEAndUpdatesSnapshot(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", `<section class="md-block" id="old"><p>Original</p></section>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	readSSEBlock(t, reader) // connected comment
+
+	updated := template.HTML(`<section class="md-block" id="new"><p>Updated</p></section>`)
+	err = srv.BroadcastPatches(updated, []document.PatchOp{{
+		Op:   document.OpReplace,
+		ID:   "old",
+		HTML: string(updated),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block := readSSEBlock(t, reader)
+	if len(block) != 2 {
+		t.Fatalf("expected patch event and data, got %v", block)
+	}
+	if block[0] != "event: patch" {
+		t.Fatalf("expected patch event, got %q", block[0])
+	}
+	if !strings.HasPrefix(block[1], "data: ") {
+		t.Fatalf("expected data line, got %q", block[1])
+	}
+
+	var payload struct {
+		Ops []document.PatchOp `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(block[1], "data: ")), &payload); err != nil {
+		t.Fatalf("unmarshal patch payload: %v", err)
+	}
+	if len(payload.Ops) != 1 || payload.Ops[0].Op != document.OpReplace || payload.Ops[0].ID != "old" {
+		t.Fatalf("unexpected patch payload: %+v", payload)
+	}
+	if !strings.Contains(payload.Ops[0].HTML, "Updated") {
+		t.Fatalf("patch HTML missing update: %+v", payload.Ops[0])
+	}
+
+	snapshot, err := http.Get(srv.URL() + "snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(snapshot.Body)
+	snapshot.Body.Close()
+	if string(body) != string(updated) {
+		t.Fatalf("expected updated snapshot, got %q", body)
+	}
+}
+
+func TestBroadcastPatchesWithNoOpsOnlyUpdatesSnapshot(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Original</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	srv.Start()
+
+	updated := template.HTML("<p>Updated</p>")
+	if err := srv.BroadcastPatches(updated, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL() + "snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != string(updated) {
+		t.Fatalf("expected updated snapshot, got %q", body)
+	}
+}
+
 func TestRenderPage(t *testing.T) {
 	out, err := server.RenderPage(testAssets, testPageData("Rendered", "<p>Rendered Content</p>"))
 	if err != nil {
@@ -431,7 +520,8 @@ func TestClientErrorAcceptsPOST(t *testing.T) {
 
 func TestClientErrorHandler(t *testing.T) {
 	var received server.ClientError
-	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"),
+	srv, err := server.New(
+		"127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"),
 		server.WithClientErrorHandler(func(ce server.ClientError) {
 			received = ce
 		}),

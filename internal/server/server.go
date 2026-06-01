@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/mengkeat/yamdview/internal/document"
 )
 
 // ExportView is a named viewport target for standalone export.
@@ -86,9 +88,9 @@ func PageDataFromAssets(assets Assets, title string, content template.HTML) Page
 // ClientError represents a client-side render error reported by the browser.
 type ClientError struct {
 	BlockID string `json:"block_id"`
-	Kind    string `json:"kind"`    // "math", "table", etc.
+	Kind    string `json:"kind"` // "math", "table", etc.
 	Message string `json:"message"`
-	TeX     string `json:"tex"`     // original TeX for math errors
+	TeX     string `json:"tex"` // original TeX for math errors
 }
 
 // Server is the local HTTP server for the Markdown viewer.
@@ -114,6 +116,10 @@ type sseEvent struct {
 type resetPayload struct {
 	Op   string `json:"op"`
 	HTML string `json:"html"`
+}
+
+type patchPayload struct {
+	Ops []document.PatchOp `json:"ops"`
 }
 
 // Option configures a Server during construction.
@@ -239,13 +245,31 @@ func (s *Server) SetContent(content template.HTML) {
 // BroadcastReset updates the current content and sends a full-document reset
 // event to connected browsers.
 func (s *Server) BroadcastReset(content template.HTML) error {
-	payload, err := json.Marshal(resetPayload{Op: "reset", HTML: string(content)})
+	payload, err := json.Marshal(resetPayload{Op: document.OpReset, HTML: string(content)})
 	if err != nil {
 		return fmt.Errorf("marshal reset payload: %w", err)
 	}
 
 	s.SetContent(content)
 	s.broadcast(sseEvent{name: "reset", data: string(payload)})
+	return nil
+}
+
+// BroadcastPatches updates the current content and sends block-level DOM patch
+// operations to connected browsers. An empty operation list only updates the
+// stored snapshot content.
+func (s *Server) BroadcastPatches(content template.HTML, ops []document.PatchOp) error {
+	s.SetContent(content)
+	if len(ops) == 0 {
+		return nil
+	}
+
+	payload, err := json.Marshal(patchPayload{Ops: ops})
+	if err != nil {
+		return fmt.Errorf("marshal patch payload: %w", err)
+	}
+
+	s.broadcast(sseEvent{name: "patch", data: string(payload)})
 	return nil
 }
 
