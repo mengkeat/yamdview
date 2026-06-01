@@ -777,3 +777,59 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestRenderTableWithMathAbsoluteValuePipes(t *testing.T) {
+	md := NewRenderer()
+	// Exact table structure from neural-ode-benchmark.md — kM·|ω| contains
+	// absolute value pipes around the Greek letter omega.
+	input := "| Method | kM·|ω| err (%) | Runtime (ms) |\n| --- | ---: | ---: |\n| EKF/RTS + speed | 12.322 | 35.244 |\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	checks := []string{
+		"<table>",
+		"<th",
+		"Method</th>",
+		"Runtime (ms)</th>",
+		"12.322</td>",
+		"35.244</td>",
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected output to contain %q\nGot: %s", want, got)
+		}
+	}
+	// Should not have diagnostics
+	if strings.Contains(got, "table.ambiguous") {
+		t.Errorf("table should not have ambiguous diagnostics:\n%s", got)
+	}
+}
+
+func TestRenderTableWithDegreeSuperscriptAndMathPipes(t *testing.T) {
+	// Full header from the benchmark file with °, ², and |ω|
+	md := NewRenderer()
+	input := "| Method | Pos RMSE (mm) | Vel RMSE (m/s) | Acc RMSE (m/s²) | kD err (%) | kM·|ω| err (%) | Axis err (°) | Runtime (ms) |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n| EKF | 5.291 | 0.088 | 1.360 | 5.552 | 12.862 | 0.861 | 35.476 |\n"
+	got, err := Render(md, []byte(input))
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if !strings.Contains(got, "<table>") {
+		t.Fatalf("expected table to render, got paragraph:\n%s", got)
+	}
+
+	// All 8 columns should be present
+	if strings.Contains(got, "table.ambiguous") {
+		t.Errorf("table should not have ambiguous diagnostics:\n%s", got)
+	}
+
+	// Verify the math content is converted
+	if !strings.Contains(got, `\cdot`) {
+		t.Errorf("expected \\cdot for middle dot in output")
+	}
+	if !strings.Contains(got, `\omega`) {
+		t.Errorf("expected \\omega in output")
+	}
+}

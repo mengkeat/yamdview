@@ -197,7 +197,7 @@ func repairWithSeparator(result Result, rows []row, trailing string) Result {
 		return result
 	}
 
-	if rows[1].separator && allRowsHaveColumns(rows, targetCols) && !needsCodePipeEscapes(rows) {
+	if rows[1].separator && allRowsHaveColumns(rows, targetCols) && !needsCodePipeEscapes(rows) && !needsMathPipeEscapes(rows) {
 		return result
 	}
 
@@ -263,10 +263,40 @@ func renderDataRow(b *strings.Builder, cells []string) {
 	b.WriteString("|")
 	for _, cell := range cells {
 		b.WriteByte(' ')
-		b.WriteString(escapePipesInCodeSpans(strings.TrimSpace(cell)))
+		b.WriteString(escapeCellContent(strings.TrimSpace(cell)))
 		b.WriteString(" |")
 	}
 	b.WriteByte('\n')
+}
+
+// escapeCellContent escapes pipe characters that are part of math absolute
+// value notation (e.g., |ω| → \|ω\|) and pipes inside inline code spans,
+// so goldmark's table parser treats them as literal text.
+func escapeCellContent(cell string) string {
+	// First escape code span pipes.
+	cell = escapePipesInCodeSpans(cell)
+	// Then escape math absolute value pipes.
+	cell = escapeMathPipes(cell)
+	return cell
+}
+
+// escapeMathPipes finds math absolute value pipes in cell text and
+// backslash-escapes them so they are not treated as table delimiters.
+func escapeMathPipes(cell string) string {
+	mathPipes := findMathPipePositions(cell)
+	if len(mathPipes) == 0 {
+		return cell
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(cell); i++ {
+		if mathPipes[i] {
+			b.WriteString("\\|")
+		} else {
+			b.WriteByte(cell[i])
+		}
+	}
+	return b.String()
 }
 
 func escapePipesInCodeSpans(cell string) string {
@@ -304,6 +334,21 @@ func needsCodePipeEscapes(rows []row) bool {
 			if hasUnescapedPipeInCodeSpan(cell) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// needsMathPipeEscapes reports whether any data row's raw text contains
+// math absolute value pipes (like |ω|) that need escaping for goldmark.
+func needsMathPipeEscapes(rows []row) bool {
+	for _, row := range rows {
+		if row.separatorLike {
+			continue
+		}
+		mathPipes := findMathPipePositions(row.raw)
+		if len(mathPipes) > 0 {
+			return true
 		}
 	}
 	return false
@@ -449,6 +494,10 @@ func splitPipeCells(line string) []string {
 		return nil
 	}
 
+	// Pre-scan to identify math absolute-value pipes (e.g. |ω|, |v|, |x+y|)
+	// that should NOT be treated as cell delimiters.
+	mathPipes := findMathPipePositions(line)
+
 	var cells []string
 	start := 0
 	inCode := false
@@ -466,7 +515,7 @@ func splitPipeCells(line string) []string {
 			inCode = !inCode
 			continue
 		}
-		if r == '|' && !inCode {
+		if r == '|' && !inCode && !mathPipes[i] {
 			cells = append(cells, strings.TrimSpace(line[start:i]))
 			start = i + len("|")
 		}
@@ -480,6 +529,201 @@ func splitPipeCells(line string) []string {
 		cells = cells[:len(cells)-1]
 	}
 	return cells
+}
+
+// findMathPipePositions identifies pipe characters that are part of math
+// absolute value expressions rather than table cell delimiters. A pipe at
+// byte position i is a math pipe if it forms part of a matched |...| pair
+// where the content between the pipes contains Unicode math characters or
+// is a single short math expression. Returns byte positions for use with
+// range-string iteration.
+func findMathPipePositions(line string) map[int]bool {
+	// Find all pipes at byte positions, respecting code spans and escapes.
+	inCode := false
+	escaped := false
+	var pipePositions []int // byte positions of pipes not in code spans
+	for i := 0; i < len(line); i++ {
+		b := line[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if b == '\\' {
+			escaped = true
+			continue
+		}
+		if b == '`' {
+			inCode = !inCode
+			continue
+		}
+		if b == '|' && !inCode {
+			pipePositions = append(pipePositions, i)
+		}
+	}
+
+	result := make(map[int]bool)
+
+	// For each pipe, try to match it as an opening | with a closing |,
+	// where the content between them looks like a math expression.
+	// We match greedily (closest closing pipe first) and require that the
+	// content between matched pipes does not itself contain any pipe.
+	for idx, openPos := range pipePositions {
+		if result[openPos] {
+			continue
+		}
+		for _, closePos := range pipePositions[idx+1:] {
+			between := line[openPos+1 : closePos]
+			// Skip if the content contains an intermediate pipe character;
+			// the matched pair must be adjacent pipes with no pipes between.
+			if strings.ContainsRune(between, '|') {
+				continue
+			}
+			if looksLikeMathAbsoluteValue(between) {
+				result[openPos] = true
+				result[closePos] = true
+				break
+			}
+		}
+	}
+
+	return result
+}
+
+// looksLikeMathAbsoluteValue reports whether the content between two pipe
+// characters looks like a math expression that should be treated as absolute
+// value notation rather than table cell content.
+func looksLikeMathAbsoluteValue(content string) bool {
+	runes := []rune(content)
+	if len(runes) == 0 || len(runes) > 16 {
+		return false
+	}
+
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return false
+	}
+	runes = []rune(trimmed)
+
+	// Strongest signal: contains at least one Unicode math character.
+	hasMathChar := false
+	for _, r := range runes {
+		if isUnicodeMathChar(r) {
+			hasMathChar = true
+		}
+	}
+
+	if hasMathChar {
+		// Must not look like a table cell fragment ending with a math operator
+		// (e.g. "kM·" from "kM·|ω| err (%)" is NOT an absolute value).
+		lastRune := runes[len(runes)-1]
+		if isMathOperator(lastRune) {
+			return false
+		}
+		// Must not start with a math operator either.
+		if isMathOperator(runes[0]) {
+			return false
+		}
+		// Must contain a "strong" math character (Greek letter, math symbol)
+		// rather than just common symbols like ° (degree) or ² (superscript)
+		// that appear in regular text.
+		hasStrongMath := false
+		for _, r := range runes {
+			if isStrongMathChar(r) {
+				hasStrongMath = true
+				break
+			}
+		}
+		if !hasStrongMath {
+			return false
+		}
+		return true
+	}
+
+	// Single lowercase letter commonly used as a math variable: |x|, |v|, |n|.
+	// Only single letters to avoid false positives like |ok|, |no|, |pi|.
+	if len(runes) == 1 {
+		r := runes[0]
+		return r >= 'a' && r <= 'z'
+	}
+
+	return false
+}
+
+// isMathOperator reports whether r is a Unicode math operator that would
+// typically appear between operands (not standalone in absolute value).
+func isMathOperator(r rune) bool {
+	switch r {
+	case '·', '×', '÷', '±', '∓', '∘', '⋆', '⊕', '⊗', '∧', '∨':
+		return true
+	}
+	return false
+}
+
+// isStrongMathChar reports whether r is a Unicode character that strongly
+// indicates math context (Greek letters, specialized math symbols) rather
+// than common symbols like ° (degree) or ² (superscript) that appear in
+// regular prose and table headers.
+func isStrongMathChar(r rune) bool {
+	// Greek letters are the strongest signal.
+	if r >= 'α' && r <= 'ω' {
+		switch r {
+		case 'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ',
+			'ν', 'ξ', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω':
+			return true
+		}
+	}
+	switch r {
+	case 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Υ', 'Φ', 'Ψ', 'Ω':
+		return true
+	case 'ϵ', 'ϑ', 'ϕ', 'ϱ', 'ℓ':
+		return true
+	// Specialized math symbols unlikely in regular text.
+	case '∀', '∃', '∈', '∉', '∑', '∏', '∫', '∮', '∂', '∇',
+		'⊂', '⊃', '⊆', '⊇', '∪', '∩', '∅',
+		'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ', 'ℙ', 'ℍ', '𝔽':
+		return true
+	}
+	return false
+}
+
+// isUnicodeMathChar reports whether r is a Unicode math character that may
+// appear in table headers with absolute value notation (e.g. ω, ·, ×, ²).
+// This mirrors mathfix.isUnicodeMathChar but avoids importing that package.
+func isUnicodeMathChar(r rune) bool {
+	// Greek lowercase
+	if r >= 'α' && r <= 'ω' {
+		switch r {
+		case 'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ',
+			'ν', 'ξ', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω':
+			return true
+		}
+	}
+	// Greek uppercase
+	switch r {
+	case 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Υ', 'Φ', 'Ψ', 'Ω':
+		return true
+	}
+	// Math operators and symbols commonly used in table headers
+	switch r {
+	case '·', '×', '÷', '±', '∓', '≠', '≈', '≤', '≥', '∞',
+		'²', '³', '⁰', '¹', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹',
+		'°', '∂', '∫', '∑', '∏', '√', '∇', '∈', '∉', '∀', '∃',
+		'→', '←', '↔', '↓', '↑', '⇒', '⇔', '↦',
+		'⊂', '⊃', '⊆', '⊇', '∪', '∩', '∅',
+		'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ', 'ℙ', 'ℍ',
+		'−', '∝', '∼', '≅', '≡', '⊥', '∠', '‖',
+		'½', '⅓', '⅔', '¼', '¾', '…', '∘', '⋆',
+		'⊕', '⊗', '¬', '∧', '∨', 'ℓ', 'ϵ', 'ϑ', 'ϕ', 'ϱ':
+		return true
+	}
+	// Superscripts and subscripts
+	if r >= '⁰' && r <= '⁾' {
+		return true
+	}
+	if r >= '₀' && r <= '₎' {
+		return true
+	}
+	return false
 }
 
 func hasTablePipe(line string) bool {
