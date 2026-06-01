@@ -389,3 +389,94 @@ func readSSEBlock(t *testing.T, reader *bufio.Reader) []string {
 		lines = append(lines, line)
 	}
 }
+
+func TestClientErrorRejectsGET(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "client-error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 for GET, got %d", resp.StatusCode)
+	}
+}
+
+func TestClientErrorAcceptsPOST(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Start()
+
+	body := `[{"block_id":"b1","kind":"math","message":"bad tex","tex":"\\bad"}]`
+	resp, err := http.Post(srv.URL()+"client-error", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 for POST, got %d", resp.StatusCode)
+	}
+}
+
+func TestClientErrorHandler(t *testing.T) {
+	var received server.ClientError
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"),
+		server.WithClientErrorHandler(func(ce server.ClientError) {
+			received = ce
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Start()
+
+	body := `[{"block_id":"b2","kind":"math","message":"parse fail","tex":"$$bad"}]`
+	resp, err := http.Post(srv.URL()+"client-error", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if received.BlockID != "b2" {
+		t.Errorf("expected block_id b2, got %q", received.BlockID)
+	}
+	if received.Kind != "math" {
+		t.Errorf("expected kind math, got %q", received.Kind)
+	}
+	if received.Message != "parse fail" {
+		t.Errorf("expected message parse fail, got %q", received.Message)
+	}
+}
+
+func TestKatexStaticServing(t *testing.T) {
+	// Create a minimal FS with one file.
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	// Without KaTeX FS, /katex/ should 404.
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "katex/katex.min.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 without katex FS, got %d", resp.StatusCode)
+	}
+}
