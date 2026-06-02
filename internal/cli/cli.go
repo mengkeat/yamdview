@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/mengkeat/yamdview/internal/fixer"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
 )
@@ -23,6 +24,8 @@ type Config struct {
 	Debounce     time.Duration
 	Export       string // export standalone HTML to this path (empty = serve)
 	ExportView   string // viewport target for export: phone, tablet, laptop, desktop
+	WriteFixes   fixer.WriteMode
+	BackupDir    string // directory for backup files when WriteFixes is backup
 }
 
 func Parse(args []string) (Config, error) {
@@ -34,6 +37,8 @@ func Parse(args []string) (Config, error) {
 	debounce := flags.Duration("debounce", DefaultDebounce, "file watcher debounce duration")
 	export := flags.String("export", "", "export standalone HTML to this file path")
 	exportView := flags.String("export-view", "", "viewport target for export: phone, tablet, laptop, desktop")
+	writeFixes := flags.String("write-fixes", string(fixer.WriteModeNever), "whether to persist heuristic fixes: never, backup, in-place")
+	backupDir := flags.String("backup-dir", "", "directory for backup files when --write-fixes=backup (default: same directory as source)")
 
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
@@ -66,6 +71,18 @@ func Parse(args []string) (Config, error) {
 		)
 	}
 
+	writeMode, err := fixer.ParseWriteMode(*writeFixes)
+	if err != nil {
+		return Config{}, fmt.Errorf("--write-fixes: %w", err)
+	}
+	if writeMode == fixer.WriteModeBackup && *backupDir != "" {
+		if info, err := os.Stat(*backupDir); err != nil {
+			return Config{}, fmt.Errorf("backup directory %s: %w", *backupDir, err)
+		} else if !info.IsDir() {
+			return Config{}, fmt.Errorf("backup path is not a directory: %s", *backupDir)
+		}
+	}
+
 	return Config{
 		MarkdownPath: path,
 		Addr:         *addr,
@@ -73,5 +90,7 @@ func Parse(args []string) (Config, error) {
 		Debounce:     *debounce,
 		Export:       *export,
 		ExportView:   *exportView,
+		WriteFixes:   writeMode,
+		BackupDir:    *backupDir,
 	}, nil
 }

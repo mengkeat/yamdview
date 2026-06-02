@@ -197,3 +197,106 @@ func TestParseExportViewWithoutExportIsValid(t *testing.T) {
 		t.Errorf("expected ExportView desktop, got %q", cfg.ExportView)
 	}
 }
+
+func TestParseWriteFixesDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WriteFixes != "never" {
+		t.Errorf("expected default WriteFixes=never, got %q", cfg.WriteFixes)
+	}
+}
+
+func TestParseWriteFixesModes(t *testing.T) {
+	tests := []struct {
+		flag string
+		want string
+	}{
+		{"never", "never"},
+		{"backup", "backup"},
+		{"in-place", "in-place"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "doc.md")
+			if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Parse([]string{"--write-fixes", tt.flag, path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(cfg.WriteFixes) != tt.want {
+				t.Errorf("got %q, want %q", cfg.WriteFixes, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRejectsInvalidWriteFixes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Parse([]string{"--write-fixes", "always", path})
+	if err == nil || !strings.Contains(err.Error(), "--write-fixes") {
+		t.Fatalf("expected --write-fixes error, got %v", err)
+	}
+}
+
+func TestParseBackupDirFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	backup := t.TempDir()
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]string{"--write-fixes", "backup", "--backup-dir", backup, path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BackupDir != backup {
+		t.Errorf("expected BackupDir %q, got %q", backup, cfg.BackupDir)
+	}
+}
+
+func TestParseRejectsNonexistentBackupDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Parse([]string{"--write-fixes", "backup", "--backup-dir", filepath.Join(dir, "missing"), path})
+	if err == nil || !strings.Contains(err.Error(), "backup directory") {
+		t.Fatalf("expected backup directory error, got %v", err)
+	}
+}
+
+func TestParseRejectsFileAsBackupDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	file := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(path, []byte("# Hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Parse([]string{"--write-fixes", "backup", "--backup-dir", file, path})
+	if err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("expected not-a-directory error, got %v", err)
+	}
+}
