@@ -3,11 +3,9 @@ package fixer
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -62,12 +60,23 @@ type WriteResult struct {
 // When mode is WriteModeNever, no file is written and the original content is
 // returned via a no-op result.
 func WriteFixes(path string, mode WriteMode, backupDir string, patches []SourcePatch) (WriteResult, error) {
-	if mode == WriteModeNever {
+	switch mode {
+	case WriteModeNever:
 		return WriteResult{}, nil
+	case WriteModeBackup, WriteModeInPlace:
+		// Continue below.
+	default:
+		return WriteResult{}, fmt.Errorf("unknown write mode %q; valid values: never, backup, in-place", mode)
 	}
 	if len(patches) == 0 {
 		return WriteResult{}, nil
 	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return WriteResult{}, fmt.Errorf("stat %s: %w", path, err)
+	}
+	perm := info.Mode().Perm()
 
 	original, err := os.ReadFile(path)
 	if err != nil {
@@ -86,20 +95,20 @@ func WriteFixes(path string, mode WriteMode, backupDir string, patches []SourceP
 	result := WriteResult{WrittenAt: now, PatchCount: len(patches)}
 
 	if mode == WriteModeBackup {
-		backup, err := writeBackup(path, backupDir, original, now)
+		backup, err := writeBackup(path, backupDir, original, now, perm)
 		if err != nil {
 			return WriteResult{}, fmt.Errorf("write backup: %w", err)
 		}
 		result.BackupPath = backup
 	}
 
-	if err := atomicWrite(path, updated); err != nil {
+	if err := atomicWrite(path, updated, perm); err != nil {
 		return WriteResult{}, fmt.Errorf("atomic write: %w", err)
 	}
 	return result, nil
 }
 
-func writeBackup(path, backupDir string, contents []byte, now time.Time) (string, error) {
+func writeBackup(path, backupDir string, contents []byte, now time.Time, perm os.FileMode) (string, error) {
 	dir := backupDir
 	if dir == "" {
 		dir = filepath.Dir(path)
@@ -111,9 +120,11 @@ func writeBackup(path, backupDir string, contents []byte, now time.Time) (string
 		// Add a counter suffix when the timestamp collides (rapid re-saves).
 		for i := 2; ; i++ {
 			candidate := filepath.Join(dir, fmt.Sprintf("%s.bak-%s-%d", base, stamp, i))
-			if _, err := os.Stat(candidate); err != nil {
+			if _, err := os.Stat(candidate); os.IsNotExist(err) {
 				backupPath = candidate
 				break
+			} else if err != nil {
+				return "", err
 			}
 		}
 	} else if !os.IsNotExist(err) {
@@ -122,7 +133,7 @@ func writeBackup(path, backupDir string, contents []byte, now time.Time) (string
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if err := writeFileAtomic(backupPath, contents, 0o644); err != nil {
+	if err := writeFileAtomic(backupPath, contents, perm); err != nil {
 		return "", err
 	}
 	return backupPath, nil
@@ -131,7 +142,7 @@ func writeBackup(path, backupDir string, contents []byte, now time.Time) (string
 // atomicWrite writes contents to a temp file in the same directory as path
 // and then renames it over the original. The rename is atomic on POSIX
 // filesystems when the source and destination are on the same mount.
-func atomicWrite(path string, contents []byte) error {
+func atomicWrite(path string, contents []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".yamdview.tmp-")
 	if err != nil {
@@ -141,7 +152,7 @@ func atomicWrite(path string, contents []byte) error {
 	cleanup := func() {
 		_ = os.Remove(tmpName)
 	}
-	if _, err := io.Copy(tmp, strings.NewReader(string(contents))); err != nil {
+	if _, err := tmp.Write(contents); err != nil {
 		_ = tmp.Close()
 		cleanup()
 		return err
@@ -152,6 +163,10 @@ func atomicWrite(path string, contents []byte) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
 		cleanup()
 		return err
 	}

@@ -124,10 +124,60 @@ func TestWriteFixesInPlace(t *testing.T) {
 	}
 }
 
-func TestWriteFixesBackup(t *testing.T) {
+func TestWriteFixesRejectsUnknownMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.md")
 	if err := os.WriteFile(path, []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := WriteFixes(path, WriteMode("bogus"), "", []SourcePatch{
+		{StartByte: 6, EndByte: 11, OldText: "world", NewText: "Go"},
+	})
+	if err == nil {
+		t.Fatal("expected unknown mode error")
+	}
+	if !strings.Contains(err.Error(), "unknown write mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "hello world\n" {
+		t.Fatalf("unknown mode should not modify file: %q", data)
+	}
+}
+
+func TestWriteFixesPreservesFileMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("hello world\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	patches := []SourcePatch{
+		{StartByte: 6, EndByte: 11, OldText: "world", NewText: "Go", Source: SourceHeuristicTable},
+	}
+	if _, err := WriteFixes(path, WriteModeInPlace, "", patches); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("file mode = %v, want %v", got, os.FileMode(0o640))
+	}
+}
+
+func TestWriteFixesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("hello world\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,6 +200,13 @@ func TestWriteFixesBackup(t *testing.T) {
 	}
 	if string(backup) != "hello world\n" {
 		t.Errorf("backup should preserve original: %q", backup)
+	}
+	backupInfo, err := os.Stat(result.BackupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := backupInfo.Mode().Perm(); got != 0o640 {
+		t.Fatalf("backup mode = %v, want %v", got, os.FileMode(0o640))
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "hello Go\n" {
@@ -230,29 +287,34 @@ func TestWriteFixesAtomicRename(t *testing.T) {
 	}
 }
 
-func TestWriteFixesBackupCollision(t *testing.T) {
+func TestWriteBackupCollision(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.md")
-	if err := os.WriteFile(path, []byte("alpha\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	// Force a collision on the timestamped name.
-	stamp := time.Now().UTC().Format("20060102-150405")
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	stamp := now.UTC().Format("20060102-150405")
 	if err := os.WriteFile(filepath.Join(dir, "doc.md.bak-"+stamp), []byte("existing"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	patches := []SourcePatch{
-		{StartByte: 0, EndByte: 5, OldText: "alpha", NewText: "beta", Source: SourceHeuristicTable},
-	}
-	result, err := WriteFixes(path, WriteModeBackup, "", patches)
+	backupPath, err := writeBackup(path, "", []byte("alpha\n"), now, 0o640)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.BackupPath == filepath.Join(dir, "doc.md.bak-"+stamp) {
-		t.Errorf("backup should not overwrite existing file: %q", result.BackupPath)
+	if backupPath == filepath.Join(dir, "doc.md.bak-"+stamp) {
+		t.Errorf("backup should not overwrite existing file: %q", backupPath)
+	}
+	if !strings.HasSuffix(backupPath, "-2") {
+		t.Errorf("backup should use collision suffix -2, got %q", backupPath)
 	}
 	originalBackup, _ := os.ReadFile(filepath.Join(dir, "doc.md.bak-"+stamp))
 	if string(originalBackup) != "existing" {
 		t.Errorf("existing backup file should be preserved: %q", originalBackup)
+	}
+	backup, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != "alpha\n" {
+		t.Errorf("backup contents = %q, want original", backup)
 	}
 }
