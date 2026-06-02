@@ -51,8 +51,17 @@ type Block struct {
 	SourceEnd   int
 	StartLine   int
 	EndLine     int
+	Source      string // original source slice (unrepaired)
+	Normalized  string // source that was actually rendered (may be repaired)
 	HTML        string
 	Diagnostics []Diagnostic
+}
+
+// WasNormalized reports whether the rendered block used source that differs
+// from the original slice. When true, the difference between Source and
+// Normalized is a candidate SourcePatch for safe fix persistence.
+func (b Block) WasNormalized() bool {
+	return b.Source != b.Normalized
 }
 
 // DocumentSnapshot is the rendered state of one source file version.
@@ -123,6 +132,8 @@ func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
 			SourceEnd:   span.end,
 			StartLine:   span.startLine,
 			EndLine:     span.endLine,
+			Source:      blockSource,
+			Normalized:  renderSource,
 			HTML:        rendered,
 			Diagnostics: diagnostics,
 		}
