@@ -48,7 +48,7 @@
 
 - **🖥 Live Preview** &mdash; Render Markdown in your browser; auto-refreshes on save via Server-Sent Events (SSE) with partial DOM patching for instant updates.
 - **📐 KaTeX Math** &mdash; Inline (`$...$`), display (`$$...$$`), LaTeX-style (`\(...\)`, `\[...\]`), and fenced `math` blocks &mdash; all rendered with fully vendored KaTeX. Zero network calls.
-- **🔣 Unicode Math Detection** &mdash; Automatically converts LLM-style Unicode equations (`∀x ∈ ℝ, x² ≥ 0`) to rendered TeX at display time. The source file is **never modified**.
+- **🔣 Unicode Math Detection** &mdash; Automatically converts LLM-style Unicode equations (`∀x ∈ ℝ, x² ≥ 0`) to rendered TeX at display time. The source file is **not modified unless you opt in** with `--write-fixes`.
 - **📊 Table Repair** &mdash; Heuristically detects and fixes malformed pipe tables (misaligned columns, missing separators, code pipes).
 - **📤 Offline Export** &mdash; Generate self-contained HTML files with inlined CSS, JS, and KaTeX. Open in any browser, no server needed.
 - **🎨 Paper & Ink Theme** &mdash; A warm, distinctive reading environment with Crimson Pro typography, paper-toned backgrounds, and ink-like text colors. [See below](#design--theme).
@@ -192,7 +192,7 @@ LLM output often contains Unicode math without TeX delimiters:
 ∫₀¹ x² dx = 1/3
 ```
 
-YAMDView detects these patterns automatically and converts them to KaTeX-rendered TeX at display time. The original source file is **never modified** &mdash; conversion is render-only.
+YAMDView detects these patterns automatically and converts them to KaTeX-rendered TeX at display time. By default, conversion is render-only; use `--write-fixes` only when you want to persist the repaired Markdown.
 
 **Supported Unicode categories:**
 
