@@ -484,6 +484,69 @@ func TestPersistFixesInPlaceRepairsTable(t *testing.T) {
 	}
 }
 
+func TestPersistFixesCombinesTableAndMath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	original := "Name | Formula\nf | α²\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "in-place",
+	}, testAssets)
+
+	src, snapshot, err := application.readAndSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.persistFixes(src, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	updated := string(data)
+	if !strings.Contains(updated, "| --- |") {
+		t.Fatalf("repaired file missing separator: %q", updated)
+	}
+	if !strings.Contains(updated, "$") || !strings.Contains(updated, `\alpha`) {
+		t.Fatalf("repaired file missing math conversion: %q", updated)
+	}
+}
+
+func TestPersistFixesRepairsTableDuringFullResetSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	original := "Name | Score\nAlice | 10\n\n[docs]: https://example.com\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "in-place",
+	}, testAssets)
+
+	src, snapshot, err := application.readAndSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.FullResetOnly {
+		t.Fatal("expected reference definition to force full-reset snapshot")
+	}
+	if err := application.persistFixes(src, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	updated := string(data)
+	if !strings.Contains(updated, "| --- |") {
+		t.Fatalf("repaired file missing separator: %q", updated)
+	}
+	if !strings.Contains(updated, "[docs]: https://example.com") {
+		t.Fatalf("reference definition should be preserved: %q", updated)
+	}
+}
+
 func TestPersistFixesBackupCreatesBackup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.md")
@@ -528,6 +591,52 @@ func TestPersistFixesBackupCreatesBackup(t *testing.T) {
 	}
 }
 
+func TestExportPersistsFixesWhenRequested(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "doc.md")
+	dst := filepath.Join(dir, "out.html")
+	original := "Name | Score\nAlice | 10\n"
+
+	if err := os.WriteFile(src, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: src,
+		Export:       dst,
+		WriteFixes:   "backup",
+	}, testAssets)
+
+	if err := application.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(updated), "| --- |") {
+		t.Fatalf("export with write-fixes should update source: %q", updated)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("export file missing: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundBackup := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "doc.md.bak-") {
+			foundBackup = true
+		}
+	}
+	if !foundBackup {
+		t.Fatalf("expected backup next to source, got entries: %+v", entries)
+	}
+}
+
 func TestPersistFixesRejectsStalePatches(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "doc.md")
@@ -556,7 +665,8 @@ func TestPersistFixesRejectsStalePatches(t *testing.T) {
 }
 
 func TestReloadLoopPersistsFixesOnSave(t *testing.T) {
-	path, _, _, changes := startReloadLoopTestWithFixes(t,
+	path, _, _, changes := startReloadLoopTestWithFixes(
+		t,
 		"Name | Score\nAlice | 10\nBob | 9\n",
 		"backup",
 		"",

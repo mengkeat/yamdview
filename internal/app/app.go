@@ -61,9 +61,14 @@ func (a *App) Run() error {
 // exportStandalone renders the Markdown file to a self-contained HTML document
 // and writes it to the path specified by cfg.Export.
 func (a *App) exportStandalone() error {
-	snapshot, err := a.snapshotFile()
+	src, snapshot, err := a.readAndSnapshot()
 	if err != nil {
 		return fmt.Errorf("render markdown: %w", err)
+	}
+	if a.cfg.WriteFixes != fixer.WriteModeNever {
+		if err := a.persistFixes(src, snapshot); err != nil {
+			return fmt.Errorf("persist fixes: %w", err)
+		}
 	}
 
 	html, err := server.ExportStandalone(a.assets, server.PageData{
@@ -171,14 +176,11 @@ func (a *App) snapshotFile() (document.DocumentSnapshot, error) {
 // persistFixes collects table and math patches for the current source/snapshot
 // pair, writes them according to the configured WriteMode, and reports a
 // concise summary to the CLI.
-func (a *App) persistFixes(src []byte, snapshot document.DocumentSnapshot) error {
-	tablePatches := fixer.CollectTablePatches(snapshot)
-	mathPatches, err := fixer.CollectMathPatches(src)
+func (a *App) persistFixes(src []byte, _ document.DocumentSnapshot) error {
+	allPatches, tableCount, mathCount, err := fixer.CollectDocumentPatches(src)
 	if err != nil {
-		return fmt.Errorf("collect math patches: %w", err)
+		return fmt.Errorf("collect patches: %w", err)
 	}
-	allPatches := append([]fixer.SourcePatch(nil), tablePatches...)
-	allPatches = append(allPatches, mathPatches...)
 	if len(allPatches) == 0 {
 		logFixSummary(a.cfg.MarkdownPath, 0, 0, nil, "", a.cfg.WriteFixes)
 		return nil
@@ -188,7 +190,7 @@ func (a *App) persistFixes(src []byte, snapshot document.DocumentSnapshot) error
 	if err != nil {
 		return err
 	}
-	logFixSummary(a.cfg.MarkdownPath, len(tablePatches), len(mathPatches), allPatches, result.BackupPath, a.cfg.WriteFixes)
+	logFixSummary(a.cfg.MarkdownPath, tableCount, mathCount, allPatches, result.BackupPath, a.cfg.WriteFixes)
 	return nil
 }
 
