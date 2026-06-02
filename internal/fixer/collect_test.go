@@ -64,7 +64,7 @@ func TestCollectMathPatchesForUnicodeEquations(t *testing.T) {
 		if p.StartByte < 0 || p.EndByte > len(src) {
 			t.Errorf("patch offsets out of range: [%d:%d]", p.StartByte, p.EndByte)
 		}
-		if p.OldText != string(src[p.StartByte:p.EndByte]) {
+		if p.OldText != src[p.StartByte:p.EndByte] {
 			t.Errorf("OldText does not match recorded offsets: %q vs %q", p.OldText, src[p.StartByte:p.EndByte])
 		}
 		if !strings.Contains(p.NewText, "$") {
@@ -130,6 +130,72 @@ func TestMathPatchesRoundTrip(t *testing.T) {
 	}
 	if len(patches2) != 0 {
 		t.Errorf("expected idempotent patches, got %d additional patches", len(patches2))
+	}
+}
+
+func TestCollectDocumentPatchesCombinesOverlappingTableAndMath(t *testing.T) {
+	src := "Name | Formula\nf | α²\n"
+	patches, tableCount, mathCount, err := CollectDocumentPatches([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount == 0 {
+		t.Fatal("expected a table repair candidate")
+	}
+	if mathCount == 0 {
+		t.Fatal("expected a math conversion candidate")
+	}
+	if err := ValidatePatches([]byte(src), patches); err != nil {
+		t.Fatalf("combined patches should be valid and non-overlapping: %v", err)
+	}
+
+	rewritten := string(Apply([]byte(src), patches))
+	if !strings.Contains(rewritten, "| --- |") {
+		t.Fatalf("rewritten source missing table separator: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, "$") || !strings.Contains(rewritten, `\alpha`) {
+		t.Fatalf("rewritten source missing math conversion: %q", rewritten)
+	}
+}
+
+func TestCollectDocumentPatchesAnchorsInsertedTableSeparator(t *testing.T) {
+	src := "| A | B |\n| C | D |\n"
+	patches, tableCount, _, err := CollectDocumentPatches([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount == 0 || len(patches) == 0 {
+		t.Fatalf("expected table insertion patch, tableCount=%d patches=%d", tableCount, len(patches))
+	}
+	if err := ValidatePatches([]byte(src), patches); err != nil {
+		t.Fatalf("inserted separator patch should be anchored by existing text: %v", err)
+	}
+
+	rewritten := string(Apply([]byte(src), patches))
+	if !strings.Contains(rewritten, "| --- | --- |") {
+		t.Fatalf("rewritten source missing separator: %q", rewritten)
+	}
+}
+
+func TestCollectDocumentPatchesRepairsTableWhenSnapshotNeedsFullReset(t *testing.T) {
+	src := "Name | Score\nAlice | 10\n\n[docs]: https://example.com\n"
+	patches, tableCount, _, err := CollectDocumentPatches([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount == 0 {
+		t.Fatal("expected table repair candidate")
+	}
+	if err := ValidatePatches([]byte(src), patches); err != nil {
+		t.Fatalf("patches should validate: %v", err)
+	}
+
+	rewritten := string(Apply([]byte(src), patches))
+	if !strings.Contains(rewritten, "| --- |") {
+		t.Fatalf("rewritten source missing table separator: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, "[docs]: https://example.com") {
+		t.Fatalf("rewritten source dropped reference definition: %q", rewritten)
 	}
 }
 

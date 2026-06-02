@@ -6,6 +6,7 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/mathfix"
+	"github.com/mengkeat/yamdview/internal/tablefix"
 )
 
 // CollectTablePatches returns SourcePatches for every block whose rendered
@@ -13,7 +14,7 @@ import (
 // Blocks that were rendered unchanged, or that produced diagnostics without
 // modifying the source, are not returned.
 func CollectTablePatches(snapshot document.DocumentSnapshot) []SourcePatch {
-	var patches []SourcePatch
+	patches := make([]SourcePatch, 0, len(snapshot.Blocks))
 	for _, b := range snapshot.Blocks {
 		if !b.WasNormalized() {
 			continue
@@ -51,6 +52,110 @@ func CollectMathPatches(src []byte) ([]SourcePatch, error) {
 		return nil, nil
 	}
 	return diffLineRanges(src, preprocessed, "heuristic math conversion", SourceHeuristicMath, 0.8), nil
+}
+
+// CollectDocumentPatches returns a non-overlapping patch set for all
+// deterministic source repairs. It composes table repair before math
+// conversion, matching the renderer pipeline, then diffs the original source
+// against the final repaired source. The returned counts describe how many
+// table and math candidate ranges contributed to the final patch set.
+func CollectDocumentPatches(src []byte) ([]SourcePatch, int, int, error) {
+	if len(src) == 0 {
+		return nil, 0, 0, nil
+	}
+
+	tableFixed := tablefix.Preprocess(src)
+	tablePatches := collectTablePatchesFromPreprocess(src, tableFixed)
+
+	mathPatches, err := CollectMathPatches(tableFixed)
+	if err != nil {
+		return nil, len(tablePatches), 0, err
+	}
+
+	final := tableFixed
+	if len(mathPatches) > 0 {
+		if err := ValidatePatches(tableFixed, mathPatches); err != nil {
+			// If the intermediate line diff cannot be represented as independently
+			// valid patches, still compose the renderer-equivalent final source and
+			// let the original→final diff below produce a safe fallback patch.
+			final = mathfix.Preprocess(tableFixed)
+		} else {
+			final = Apply(tableFixed, mathPatches)
+		}
+	}
+
+	if bytes.Equal(src, final) {
+		return nil, len(tablePatches), len(mathPatches), nil
+	}
+
+	patches := diffLineRanges(src, final, "heuristic source repair", SourceHeuristicBoth, 0.8)
+	annotateDocumentPatches(patches, tablePatches, len(mathPatches) > 0)
+	if len(patches) == 0 {
+		patches = []SourcePatch{wholeDocumentPatch(src, final, len(tablePatches), len(mathPatches))}
+	} else if err := ValidatePatches(src, patches); err != nil {
+		patches = []SourcePatch{wholeDocumentPatch(src, final, len(tablePatches), len(mathPatches))}
+	}
+	return patches, len(tablePatches), len(mathPatches), nil
+}
+
+func collectTablePatchesFromPreprocess(original, tableFixed []byte) []SourcePatch {
+	if bytes.Equal(original, tableFixed) {
+		return nil
+	}
+	return diffLineRanges(original, tableFixed, "heuristic table repair", SourceHeuristicTable, 0.9)
+}
+
+func annotateDocumentPatches(patches, tablePatches []SourcePatch, hasMath bool) {
+	for i := range patches {
+		overlapsTable := overlapsAny(patches[i], tablePatches)
+		switch {
+		case overlapsTable && hasMath:
+			patches[i].Source = SourceHeuristicBoth
+			patches[i].Reason = "heuristic table repair and math conversion"
+			patches[i].Confidence = 0.8
+		case overlapsTable:
+			patches[i].Source = SourceHeuristicTable
+			patches[i].Reason = "heuristic table repair"
+			patches[i].Confidence = 0.9
+		case hasMath:
+			patches[i].Source = SourceHeuristicMath
+			patches[i].Reason = "heuristic math conversion"
+			patches[i].Confidence = 0.8
+		}
+	}
+}
+
+func overlapsAny(patch SourcePatch, candidates []SourcePatch) bool {
+	for _, candidate := range candidates {
+		if patch.StartByte < candidate.EndByte && candidate.StartByte < patch.EndByte {
+			return true
+		}
+	}
+	return false
+}
+
+func wholeDocumentPatch(original, final []byte, tableCount, mathCount int) SourcePatch {
+	source := SourceHeuristicBoth
+	reason := "heuristic table repair and math conversion"
+	confidence := 0.8
+	switch {
+	case tableCount > 0 && mathCount == 0:
+		source = SourceHeuristicTable
+		reason = "heuristic table repair"
+		confidence = 0.9
+	case tableCount == 0 && mathCount > 0:
+		source = SourceHeuristicMath
+		reason = "heuristic math conversion"
+	}
+	return SourcePatch{
+		StartByte:  0,
+		EndByte:    len(original),
+		OldText:    string(original),
+		NewText:    string(final),
+		Reason:     reason,
+		Confidence: confidence,
+		Source:     source,
+	}
 }
 
 // hasTextFenceCandidate mirrors the relevant guard from mathfix.Preprocess so
@@ -102,56 +207,34 @@ func diffLineRanges(original, modified []byte, reason string, source PatchSource
 	oldLines := splitLinesKeep(original)
 	newLines := splitLinesKeep(modified)
 	oldOffsets := lineOffsets(original, oldLines)
-	newOffsets := lineOffsets(modified, newLines)
 
 	matches := lcsMatches(oldLines, newLines)
-	matchedOld := make([]bool, len(oldLines))
-	matchedNew := make([]bool, len(newLines))
-	for _, m := range matches {
-		matchedOld[m.old] = true
-		matchedNew[m.new] = true
-	}
-
 	var patches []SourcePatch
 	oldIdx, newIdx := 0, 0
-	for oldIdx < len(oldLines) || newIdx < len(newLines) {
-		// Skip matched lines on both sides.
-		for oldIdx < len(oldLines) && matchedOld[oldIdx] {
-			oldIdx++
+	for _, m := range matches {
+		if oldIdx < m.old || newIdx < m.new {
+			patch, err := buildLinePatch(original, oldLines, newLines, oldOffsets, oldIdx, m.old, newIdx, m.new, reason, source, confidence)
+			if err == nil {
+				patches = append(patches, patch)
+			}
 		}
-		for newIdx < len(newLines) && matchedNew[newIdx] {
-			newIdx++
+		oldIdx = m.old + 1
+		newIdx = m.new + 1
+	}
+
+	if oldIdx < len(oldLines) || newIdx < len(newLines) {
+		patch, err := buildLinePatch(original, oldLines, newLines, oldOffsets, oldIdx, len(oldLines), newIdx, len(newLines), reason, source, confidence)
+		if err == nil {
+			patches = append(patches, patch)
 		}
-		if oldIdx >= len(oldLines) && newIdx >= len(newLines) {
-			break
-		}
-		// Find the end of the next changed run on each side.
-		oldEnd := oldIdx
-		for oldEnd < len(oldLines) && !matchedOld[oldEnd] {
-			oldEnd++
-		}
-		newEnd := newIdx
-		for newEnd < len(newLines) && !matchedNew[newEnd] {
-			newEnd++
-		}
-		patch, err := buildLinePatch(original, modified, oldLines, newLines, oldOffsets, newOffsets, oldIdx, oldEnd, newIdx, newEnd, reason, source, confidence)
-		if err != nil {
-			// Fall back to skipping this run rather than failing the whole diff.
-			oldIdx = oldEnd
-			newIdx = newEnd
-			continue
-		}
-		patches = append(patches, patch)
-		oldIdx = oldEnd
-		newIdx = newEnd
 	}
 	return patches
 }
 
 func buildLinePatch(
-	original, modified []byte,
+	original []byte,
 	oldLines, newLines []string,
-	oldOffsets, newOffsets []int,
+	oldOffsets []int,
 	oldStart, oldEnd, newStart, newEnd int,
 	reason string,
 	source PatchSource,
@@ -159,6 +242,20 @@ func buildLinePatch(
 ) (SourcePatch, error) {
 	if oldStart == oldEnd && newStart == newEnd {
 		return SourcePatch{}, fmt.Errorf("empty changed run")
+	}
+	if oldStart == oldEnd {
+		// Pure insertions cannot be validated safely with empty OldText. Expand
+		// the replacement to include an adjacent unchanged line as an anchor.
+		switch {
+		case oldEnd < len(oldLines) && newEnd < len(newLines):
+			oldEnd++
+			newEnd++
+		case oldStart > 0 && newStart > 0:
+			oldStart--
+			newStart--
+		default:
+			return SourcePatch{}, fmt.Errorf("insertion has no anchor line")
+		}
 	}
 	oldStartByte, oldEndByte := lineRangeBytes(original, oldLines, oldOffsets, oldStart, oldEnd)
 	newText := joinLines(newLines, newStart, newEnd)
@@ -212,11 +309,12 @@ func lcsMatches(oldLines, newLines []string) []lineMatch {
 	}
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
-			if oldLines[i] == newLines[j] {
+			switch {
+			case oldLines[i] == newLines[j]:
 				dp[i][j] = dp[i+1][j+1] + 1
-			} else if dp[i+1][j] >= dp[i][j+1] {
+			case dp[i+1][j] >= dp[i][j+1]:
 				dp[i][j] = dp[i+1][j]
-			} else {
+			default:
 				dp[i][j] = dp[i][j+1]
 			}
 		}
@@ -224,15 +322,15 @@ func lcsMatches(oldLines, newLines []string) []lineMatch {
 	var matches []lineMatch
 	i, j := 0, 0
 	for i < n && j < m {
-		if oldLines[i] == newLines[j] {
+		switch {
+		case oldLines[i] == newLines[j]:
 			matches = append(matches, lineMatch{old: i, new: j})
 			i++
 			j++
 			continue
-		}
-		if dp[i+1][j] >= dp[i][j+1] {
+		case dp[i+1][j] >= dp[i][j+1]:
 			i++
-		} else {
+		default:
 			j++
 		}
 	}

@@ -49,6 +49,7 @@ type PatchSource string
 const (
 	SourceHeuristicTable PatchSource = "heuristic_table"
 	SourceHeuristicMath  PatchSource = "heuristic_math"
+	SourceHeuristicBoth  PatchSource = "heuristic_table_math"
 	SourceLLMTable       PatchSource = "llm_table"
 	SourceLLMMath        PatchSource = "llm_math"
 )
@@ -71,10 +72,10 @@ type SourcePatch struct {
 
 // Errors returned by patch validation.
 var (
-	ErrPatchOutOfRange    = errors.New("patch offsets are out of range for source")
+	ErrPatchOutOfRange      = errors.New("patch offsets are out of range for source")
 	ErrPatchOldTextMismatch = errors.New("patch OldText does not match the source at the recorded offsets")
-	ErrPatchEmptyOld      = errors.New("patch has empty OldText and zero-length offsets")
-	ErrPatchOverlap       = errors.New("patches overlap")
+	ErrPatchEmptyOld        = errors.New("patch has empty OldText and zero-length offsets")
+	ErrPatchOverlap         = errors.New("patches overlap")
 )
 
 // ValidateAgainstSource confirms that the patch is well-formed and that the
