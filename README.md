@@ -121,6 +121,8 @@ yamdview --addr 0.0.0.0:8080 notes.md  # bind to a specific address
 | `--no-open` | `false` | Don't open the system browser automatically |
 | `--export` | *(empty)* | Export self-contained HTML to this path (skips server) |
 | `--export-view` | *(empty)* | Export viewport target: `phone`, `tablet`, `laptop`, `desktop` |
+| `--write-fixes` | `never` | Persist heuristic fixes: `never`, `backup`, `in-place` |
+| `--backup-dir` | *(empty)* | Directory for backup files when `--write-fixes=backup` (default: source directory) |
 
 ### Standalone HTML export
 
@@ -227,6 +229,26 @@ Like Unicode math conversion, table repair is **render-only** by default. The so
 
 YAMDView inserts the missing alignment row and renders a properly formatted table.
 
+### Opting in to source modifications
+
+By default, both Unicode math conversion and table repair affect only the rendered view. To persist the repaired Markdown back to the source file, set `--write-fixes`:
+
+| Mode | Effect |
+|------|--------|
+| `never` (default) | Renders fixes; the source file is never modified |
+| `backup` | Creates a timestamped `file.md.bak-YYYYMMDD-HHMMSS` and atomically rewrites the source |
+| `in-place` | Atomically rewrites the source in place (no backup) |
+
+```sh
+# Atomic rewrite with a timestamped backup in the same directory.
+yamdview --write-fixes=backup notes.md
+
+# In-place rewrite, no backup (use with care; rely on your own VCS).
+yamdview --write-fixes=in-place notes.md
+```
+
+Patches are validated against the current file contents before they are written. If the file changed since the patches were computed, the write is rejected and the source is left untouched. Pass `--backup-dir <path>` to keep backups in a dedicated directory.
+
 ## Design & Theme
 
 YAMDView ships with the **Paper & Ink** theme &mdash; a warm, tactile reading environment that celebrates the materiality of text:
@@ -296,7 +318,7 @@ yamdview/
 | 4 | KaTeX and explicit math support | ✅ Complete |
 | 5 | Unicode math heuristic conversion | ✅ Complete |
 | 6 | Table heuristic detection and repair | ✅ Complete |
-| 7 | Safe fix persistence (`--write-fixes`) | Planned |
+| 7 | Safe fix persistence (`--write-fixes`) | ✅ Complete |
 | 8 | LLM provider abstraction and fallback | Planned |
 | 9 | UX, performance, and polish | Planned |
 | 10 | Packaging and documentation | In progress |
@@ -307,7 +329,7 @@ YAMDView is designed to be safe by default:
 
 - **Local-only server** &mdash; binds to `127.0.0.1` by default. Remote access requires an explicit `--addr` flag.
 - **No telemetry** &mdash; the binary makes zero outbound network requests during normal operation (fonts are loaded by the *browser*, not the binary).
-- **Opt-in modifications** &mdash; Unicode math conversion and table repair are render-only. The source file is never modified unless you explicitly opt in via `--write-fixes` (planned).
+- **Opt-in modifications** &mdash; Unicode math conversion and table repair are render-only. The source file is never modified unless you explicitly opt in via `--write-fixes=backup` or `--write-fixes=in-place`. The default is `never`.
 - **LLM provider opt-in** &mdash; Future LLM-based repair features will require explicit user approval before any source text is sent to a provider.
 
 ## Contributing
