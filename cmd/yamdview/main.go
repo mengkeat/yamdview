@@ -29,6 +29,8 @@ func main() {
 		Debounce:     cfg.Debounce,
 		Export:       cfg.Export,
 		ExportView:   cfg.ExportView,
+		WriteFixes:   cfg.WriteFixes,
+		BackupDir:    cfg.BackupDir,
 	}, assets)
 
 	if err := application.Run(); err != nil {

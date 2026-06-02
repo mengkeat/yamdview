@@ -15,6 +15,7 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/fixer"
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
@@ -29,6 +30,8 @@ type Config struct {
 	Debounce     time.Duration
 	Export       string // export standalone HTML to this path (empty = serve)
 	ExportView   string // viewport target for export
+	WriteFixes   fixer.WriteMode
+	BackupDir    string // directory for backup files when WriteFixes is backup
 }
 
 // App orchestrates rendering, serving, and browser opening.
@@ -82,9 +85,17 @@ func (a *App) exportStandalone() error {
 // serve renders, starts the HTTP server, opens the browser, and reloads on changes.
 func (a *App) serve() error {
 	// Read, segment, and render the Markdown file.
-	snapshot, err := a.snapshotFile()
+	src, snapshot, err := a.readAndSnapshot()
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
+	}
+
+	// Apply any heuristic fixes to the source file according to the
+	// configured write mode. Render-only (never) leaves the file untouched.
+	if a.cfg.WriteFixes != fixer.WriteModeNever {
+		if err := a.persistFixes(src, snapshot); err != nil {
+			log.Printf("warning: could not persist fixes: %v", err)
+		}
 	}
 
 	// Create and start HTTP server.
@@ -127,26 +138,76 @@ func (a *App) serve() error {
 
 // renderFile reads the Markdown file and returns section-wrapped rendered HTML.
 func (a *App) renderFile() (template.HTML, error) {
-	snapshot, err := a.snapshotFile()
+	_, snapshot, err := a.readAndSnapshot()
 	if err != nil {
 		return "", err
 	}
 	return template.HTML(snapshot.HTML), nil
 }
 
-// snapshotFile reads the Markdown file and builds a block-oriented snapshot.
-func (a *App) snapshotFile() (document.DocumentSnapshot, error) {
+// readAndSnapshot reads the Markdown file and builds a block-oriented snapshot.
+func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
 	data, err := os.ReadFile(a.cfg.MarkdownPath)
 	if err != nil {
-		return document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
+		return nil, document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
 	}
 
 	snapshot, err := document.BuildSnapshot(a.md, data)
 	if err != nil {
-		return document.DocumentSnapshot{}, fmt.Errorf("render markdown: %w", err)
+		return nil, document.DocumentSnapshot{}, fmt.Errorf("render markdown: %w", err)
+	}
+	return data, snapshot, nil
+}
+
+// snapshotFile reads the Markdown file and builds a block-oriented snapshot.
+func (a *App) snapshotFile() (document.DocumentSnapshot, error) {
+	_, snapshot, err := a.readAndSnapshot()
+	if err != nil {
+		return document.DocumentSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// persistFixes collects table and math patches for the current source/snapshot
+// pair, writes them according to the configured WriteMode, and reports a
+// concise summary to the CLI.
+func (a *App) persistFixes(src []byte, snapshot document.DocumentSnapshot) error {
+	tablePatches := fixer.CollectTablePatches(snapshot)
+	mathPatches, err := fixer.CollectMathPatches(src)
+	if err != nil {
+		return fmt.Errorf("collect math patches: %w", err)
+	}
+	allPatches := append([]fixer.SourcePatch(nil), tablePatches...)
+	allPatches = append(allPatches, mathPatches...)
+	if len(allPatches) == 0 {
+		logFixSummary(a.cfg.MarkdownPath, 0, 0, nil, "", a.cfg.WriteFixes)
+		return nil
 	}
 
-	return snapshot, nil
+	result, err := fixer.WriteFixes(a.cfg.MarkdownPath, a.cfg.WriteFixes, a.cfg.BackupDir, allPatches)
+	if err != nil {
+		return err
+	}
+	logFixSummary(a.cfg.MarkdownPath, len(tablePatches), len(mathPatches), allPatches, result.BackupPath, a.cfg.WriteFixes)
+	return nil
+}
+
+// logFixSummary emits a single, parseable line describing the applied (or
+// intentionally skipped) fixes. The format is stable so users and tests can
+// rely on it.
+func logFixSummary(path string, tableCount, mathCount int, patches []fixer.SourcePatch, backup string, mode fixer.WriteMode) {
+	if len(patches) == 0 {
+		if mode == fixer.WriteModeNever {
+			log.Printf("fixes: 0 applied (mode=never) for %s", path)
+		} else {
+			log.Printf("fixes: 0 candidates for %s", path)
+		}
+		return
+	}
+	log.Printf("fixes: applied %d (%d table, %d math) to %s (mode=%s)", len(patches), tableCount, mathCount, path, mode)
+	if backup != "" {
+		log.Printf("fixes: backup written to %s", backup)
+	}
 }
 
 func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot) {
@@ -165,10 +226,16 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 				changes = nil
 				continue
 			}
-			next, err := a.snapshotFile()
+			src, next, err := a.readAndSnapshot()
 			if err != nil {
 				log.Printf("warning: could not reload markdown: %v", err)
 				continue
+			}
+
+			if a.cfg.WriteFixes != fixer.WriteModeNever {
+				if err := a.persistFixes(src, next); err != nil {
+					log.Printf("warning: could not persist fixes: %v", err)
+				}
 			}
 
 			diff := document.Diff(current, next)

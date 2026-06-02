@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/fixer"
+	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
 )
@@ -427,4 +430,240 @@ func TestExportWithNonExistentMarkdown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing markdown file")
 	}
+}
+
+func TestPersistFixesNeverModeLeavesFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	original := "Name | Score\nAlice | 10\nBob | 9\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "never",
+	}, testAssets)
+
+	if err := application.persistFixes([]byte(original), mustSnapshot(t, original)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != original {
+		t.Errorf("never mode should not modify file: %q", data)
+	}
+}
+
+func TestPersistFixesInPlaceRepairsTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	original := "Name | Score\nAlice | 10\nBob | 9\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "in-place",
+	}, testAssets)
+
+	src, snapshot, err := application.readAndSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.persistFixes(src, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	updated := string(data)
+	if updated == original {
+		t.Fatalf("expected file to be modified in-place")
+	}
+	if !strings.Contains(updated, "| --- |") {
+		t.Errorf("repaired file missing separator: %q", updated)
+	}
+}
+
+func TestPersistFixesBackupCreatesBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	original := "Name | Score\nAlice | 10\nBob | 9\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "backup",
+	}, testAssets)
+
+	src, snapshot, err := application.readAndSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.persistFixes(src, snapshot); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backup string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "doc.md.bak-") {
+			backup = filepath.Join(dir, e.Name())
+			break
+		}
+	}
+	if backup == "" {
+		t.Fatalf("expected backup file in %s, got entries: %+v", dir, entries)
+	}
+	backupData, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backupData) != original {
+		t.Errorf("backup should preserve original: %q", backupData)
+	}
+}
+
+func TestPersistFixesRejectsStalePatches(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(path, []byte("# Title\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   "in-place",
+	}, testAssets)
+
+	// Build a snapshot from a stale source to simulate a race where the file
+	// has changed since the patches were computed.
+	staleSrc := []byte("Name | Score\nAlice | 10\nBob | 9\n")
+	staleSnapshot := mustSnapshot(t, string(staleSrc))
+
+	err := application.persistFixes(staleSrc, staleSnapshot)
+	if err == nil {
+		t.Fatal("expected stale-patch rejection")
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "# Title\n" {
+		t.Errorf("rejected write should leave file untouched: %q", data)
+	}
+}
+
+func TestReloadLoopPersistsFixesOnSave(t *testing.T) {
+	path, _, _, changes := startReloadLoopTestWithFixes(t,
+		"Name | Score\nAlice | 10\nBob | 9\n",
+		"backup",
+		"",
+	)
+
+	// The initial persist should have produced a backup.
+	initial := filepath.Dir(path)
+	entries, err := os.ReadDir(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundInitial := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), filepath.Base(path)+".bak-") {
+			foundInitial = true
+		}
+	}
+	if !foundInitial {
+		t.Fatalf("expected initial backup in %s, got %+v", initial, entries)
+	}
+
+	// Now simulate a user edit that introduces another malformed table.
+	if err := os.WriteFile(path, []byte("Name | Score\nAlice | 10\nBob | 9\n\nA | B\nC | D\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes <- watcher.Event{Path: path}
+
+	// Give the reload loop a moment to run.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, _ := os.ReadDir(initial)
+		count := 0
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), filepath.Base(path)+".bak-") {
+				count++
+			}
+		}
+		if count >= 2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	entries, _ = os.ReadDir(initial)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	t.Fatalf("expected at least 2 backups after second reload, got: %v", names)
+}
+
+func startReloadLoopTestWithFixes(t *testing.T, initial, mode, backupDir string) (string, *server.Server, *bufio.Reader, chan<- watcher.Event) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "doc.md")
+	if err := os.WriteFile(path, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Config{
+		MarkdownPath: path,
+		WriteFixes:   fixer.WriteMode(mode),
+		BackupDir:    backupDir,
+	}, testAssets)
+	src, initialSnapshot, err := application.readAndSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if application.cfg.WriteFixes != fixer.WriteModeNever {
+		if err := application.persistFixes(src, initialSnapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv, err := server.New("127.0.0.1:0", testAssets, server.PageData{
+		Title:   path,
+		Content: template.HTML(initialSnapshot.HTML),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	reader := bufio.NewReader(resp.Body)
+	readSSEBlock(t, reader)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	changes := make(chan watcher.Event, 1)
+	watchErrs := make(chan error)
+	go application.reloadLoop(ctx, srv, changes, watchErrs, initialSnapshot)
+
+	return path, srv, reader, changes
+}
+
+func mustSnapshot(t *testing.T, source string) document.DocumentSnapshot {
+	t.Helper()
+	md := markdown.NewRenderer()
+	snapshot, err := document.BuildSnapshot(md, []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
