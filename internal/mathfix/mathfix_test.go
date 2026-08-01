@@ -1344,6 +1344,16 @@ func TestPreprocessBlockquoteWithMath(t *testing.T) {
 	}
 }
 
+func TestPreprocessIndentedBlockquoteKeepsWhitespaceWithoutConversion(t *testing.T) {
+	// A structural line whose math character is inside an inline code span is
+	// never converted; it must be emitted verbatim, preserving indentation.
+	input := "  > `α`  \n"
+	got := string(Preprocess([]byte(input)))
+	if got != input {
+		t.Errorf("expected indentation and whitespace preserved, got: %q", got)
+	}
+}
+
 func TestPreprocessMixedEquations(t *testing.T) {
 	input := "The integral ∫₀¹ x² dx = ⅓\n\nFor x ∈ ℝ, x² ≥ 0\n"
 	got := string(Preprocess([]byte(input)))

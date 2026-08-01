@@ -103,10 +103,16 @@ func Preprocess(src []byte) []byte {
 			flush()
 			if HasUnicodeMath(string(trimmed)) && !hasTeXDelimiters(string(trimmed)) {
 				fixed := Fix(string(trimmed))
-				if fixed.Converted != string(line) {
+				// Compare against the trimmed line: Converted is derived from
+				// it, so a mismatch means a real conversion happened. When no
+				// conversion occurs the original line is emitted unchanged,
+				// preserving any leading/trailing whitespace.
+				if fixed.Converted != string(trimmed) {
 					changed = true
+					result = append(result, []byte(fixed.Converted))
+				} else {
+					result = append(result, line)
 				}
-				result = append(result, []byte(fixed.Converted))
 			} else {
 				result = append(result, line)
 			}
