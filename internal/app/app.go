@@ -66,7 +66,7 @@ func (a *App) exportStandalone() error {
 		return fmt.Errorf("render markdown: %w", err)
 	}
 	if a.cfg.WriteFixes != fixer.WriteModeNever {
-		if err := a.persistFixes(src, snapshot); err != nil {
+		if err := a.persistFixes(src); err != nil {
 			return fmt.Errorf("persist fixes: %w", err)
 		}
 	}
@@ -98,7 +98,7 @@ func (a *App) serve() error {
 	// Apply any heuristic fixes to the source file according to the
 	// configured write mode. Render-only (never) leaves the file untouched.
 	if a.cfg.WriteFixes != fixer.WriteModeNever {
-		if err := a.persistFixes(src, snapshot); err != nil {
+		if err := a.persistFixes(src); err != nil {
 			log.Printf("warning: could not persist fixes: %v", err)
 		}
 	}
@@ -141,15 +141,6 @@ func (a *App) serve() error {
 	return nil
 }
 
-// renderFile reads the Markdown file and returns section-wrapped rendered HTML.
-func (a *App) renderFile() (template.HTML, error) {
-	_, snapshot, err := a.readAndSnapshot()
-	if err != nil {
-		return "", err
-	}
-	return template.HTML(snapshot.HTML), nil
-}
-
 // readAndSnapshot reads the Markdown file and builds a block-oriented snapshot.
 func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
 	data, err := os.ReadFile(a.cfg.MarkdownPath)
@@ -164,19 +155,10 @@ func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
 	return data, snapshot, nil
 }
 
-// snapshotFile reads the Markdown file and builds a block-oriented snapshot.
-func (a *App) snapshotFile() (document.DocumentSnapshot, error) {
-	_, snapshot, err := a.readAndSnapshot()
-	if err != nil {
-		return document.DocumentSnapshot{}, err
-	}
-	return snapshot, nil
-}
-
-// persistFixes collects table and math patches for the current source/snapshot
-// pair, writes them according to the configured WriteMode, and reports a
+// persistFixes collects table and math patches for the current source, writes
+// them according to the configured WriteMode, and reports a
 // concise summary to the CLI.
-func (a *App) persistFixes(src []byte, _ document.DocumentSnapshot) error {
+func (a *App) persistFixes(src []byte) error {
 	allPatches, tableCount, mathCount, err := fixer.CollectDocumentPatches(src)
 	if err != nil {
 		return fmt.Errorf("collect patches: %w", err)
@@ -235,7 +217,7 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 			}
 
 			if a.cfg.WriteFixes != fixer.WriteModeNever {
-				if err := a.persistFixes(src, next); err != nil {
+				if err := a.persistFixes(src); err != nil {
 					log.Printf("warning: could not persist fixes: %v", err)
 				}
 			}

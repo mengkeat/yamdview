@@ -15,7 +15,6 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/fixer"
-	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
 )
@@ -100,7 +99,7 @@ func startReloadLoopTest(t *testing.T, initial string) (string, *server.Server, 
 	}
 
 	application := New(Config{MarkdownPath: path}, testAssets)
-	initialSnapshot, err := application.snapshotFile()
+	_, initialSnapshot, err := application.readAndSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +444,7 @@ func TestPersistFixesNeverModeLeavesFileUntouched(t *testing.T) {
 		WriteFixes:   "never",
 	}, testAssets)
 
-	if err := application.persistFixes([]byte(original), mustSnapshot(t, original)); err != nil {
+	if err := application.persistFixes([]byte(original)); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -467,11 +466,11 @@ func TestPersistFixesInPlaceRepairsTable(t *testing.T) {
 		WriteFixes:   "in-place",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, _, err := application.readAndSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := application.persistFixes(src, snapshot); err != nil {
+	if err := application.persistFixes(src); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -497,11 +496,11 @@ func TestPersistFixesCombinesTableAndMath(t *testing.T) {
 		WriteFixes:   "in-place",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, _, err := application.readAndSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := application.persistFixes(src, snapshot); err != nil {
+	if err := application.persistFixes(src); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -534,7 +533,7 @@ func TestPersistFixesRepairsTableDuringFullResetSnapshot(t *testing.T) {
 	if !snapshot.FullResetOnly {
 		t.Fatal("expected reference definition to force full-reset snapshot")
 	}
-	if err := application.persistFixes(src, snapshot); err != nil {
+	if err := application.persistFixes(src); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(path)
@@ -560,11 +559,11 @@ func TestPersistFixesBackupCreatesBackup(t *testing.T) {
 		WriteFixes:   "backup",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, _, err := application.readAndSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := application.persistFixes(src, snapshot); err != nil {
+	if err := application.persistFixes(src); err != nil {
 		t.Fatal(err)
 	}
 
@@ -652,9 +651,8 @@ func TestPersistFixesRejectsStalePatches(t *testing.T) {
 	// Build a snapshot from a stale source to simulate a race where the file
 	// has changed since the patches were computed.
 	staleSrc := []byte("Name | Score\nAlice | 10\nBob | 9\n")
-	staleSnapshot := mustSnapshot(t, string(staleSrc))
 
-	err := application.persistFixes(staleSrc, staleSnapshot)
+	err := application.persistFixes(staleSrc)
 	if err == nil {
 		t.Fatal("expected stale-patch rejection")
 	}
@@ -735,7 +733,7 @@ func startReloadLoopTestWithFixes(t *testing.T, initial, mode, backupDir string)
 		t.Fatal(err)
 	}
 	if application.cfg.WriteFixes != fixer.WriteModeNever {
-		if err := application.persistFixes(src, initialSnapshot); err != nil {
+		if err := application.persistFixes(src); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -766,14 +764,4 @@ func startReloadLoopTestWithFixes(t *testing.T, initial, mode, backupDir string)
 	go application.reloadLoop(ctx, srv, changes, watchErrs, initialSnapshot)
 
 	return path, srv, reader, changes
-}
-
-func mustSnapshot(t *testing.T, source string) document.DocumentSnapshot {
-	t.Helper()
-	md := markdown.NewRenderer()
-	snapshot, err := document.BuildSnapshot(md, []byte(source))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return snapshot
 }
