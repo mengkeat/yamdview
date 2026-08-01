@@ -135,7 +135,7 @@ func TestMathPatchesRoundTrip(t *testing.T) {
 
 func TestCollectDocumentPatchesCombinesOverlappingTableAndMath(t *testing.T) {
 	src := "Name | Formula\nf | α²\n"
-	patches, tableCount, mathCount, err := CollectDocumentPatches([]byte(src))
+	patches, tableCount, mathCount, err := CollectDocumentPatches([]byte(src), buildSnapshot(t, src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestCollectDocumentPatchesCombinesOverlappingTableAndMath(t *testing.T) {
 
 func TestCollectDocumentPatchesAnchorsInsertedTableSeparator(t *testing.T) {
 	src := "| A | B |\n| C | D |\n"
-	patches, tableCount, _, err := CollectDocumentPatches([]byte(src))
+	patches, tableCount, _, err := CollectDocumentPatches([]byte(src), buildSnapshot(t, src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestCollectDocumentPatchesAnchorsInsertedTableSeparator(t *testing.T) {
 
 func TestCollectDocumentPatchesRepairsTableWhenSnapshotNeedsFullReset(t *testing.T) {
 	src := "Name | Score\nAlice | 10\n\n[docs]: https://example.com\n"
-	patches, tableCount, _, err := CollectDocumentPatches([]byte(src))
+	patches, tableCount, _, err := CollectDocumentPatches([]byte(src), buildSnapshot(t, src))
 	if err != nil {
 		t.Fatal(err)
 	}

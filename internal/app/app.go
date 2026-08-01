@@ -66,7 +66,7 @@ func (a *App) exportStandalone() error {
 		return fmt.Errorf("render markdown: %w", err)
 	}
 	if a.cfg.WriteFixes != fixer.WriteModeNever {
-		if err := a.persistFixes(src); err != nil {
+		if err := a.persistFixes(src, snapshot); err != nil {
 			return fmt.Errorf("persist fixes: %w", err)
 		}
 	}
@@ -98,7 +98,7 @@ func (a *App) serve() error {
 	// Apply any heuristic fixes to the source file according to the
 	// configured write mode. Render-only (never) leaves the file untouched.
 	if a.cfg.WriteFixes != fixer.WriteModeNever {
-		if err := a.persistFixes(src); err != nil {
+		if err := a.persistFixes(src, snapshot); err != nil {
 			log.Printf("warning: could not persist fixes: %v", err)
 		}
 	}
@@ -156,10 +156,11 @@ func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
 }
 
 // persistFixes collects table and math patches for the current source, writes
-// them according to the configured WriteMode, and reports a
-// concise summary to the CLI.
-func (a *App) persistFixes(src []byte) error {
-	allPatches, tableCount, mathCount, err := fixer.CollectDocumentPatches(src)
+// them according to the configured WriteMode, and reports a concise summary
+// to the CLI. The snapshot supplies the authoritative per-block table
+// repairs; math conversion is recomputed from the repaired source.
+func (a *App) persistFixes(src []byte, snapshot document.DocumentSnapshot) error {
+	allPatches, tableCount, mathCount, err := fixer.CollectDocumentPatches(src, snapshot)
 	if err != nil {
 		return fmt.Errorf("collect patches: %w", err)
 	}
@@ -217,7 +218,7 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 			}
 
 			if a.cfg.WriteFixes != fixer.WriteModeNever {
-				if err := a.persistFixes(src); err != nil {
+				if err := a.persistFixes(src, next); err != nil {
 					log.Printf("warning: could not persist fixes: %v", err)
 				}
 			}

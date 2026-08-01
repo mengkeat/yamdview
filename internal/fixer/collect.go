@@ -55,17 +55,32 @@ func CollectMathPatches(src []byte) ([]SourcePatch, error) {
 }
 
 // CollectDocumentPatches returns a non-overlapping patch set for all
-// deterministic source repairs. It composes table repair before math
-// conversion, matching the renderer pipeline, then diffs the original source
-// against the final repaired source. The returned counts describe how many
-// table and math candidate ranges contributed to the final patch set.
-func CollectDocumentPatches(src []byte) ([]SourcePatch, int, int, error) {
+// deterministic source repairs. Table repairs come from the rendered block
+// snapshot, which records exactly what the renderer produced, so the table
+// preprocessing pass is not re-run. Math conversion is recomputed with a
+// mathfix pass because the snapshot does not capture it. The result composes
+// table repair before math conversion, matching the renderer pipeline, then
+// diffs the original source against the final repaired source. The returned
+// counts describe how many table and math candidate ranges contributed to
+// the final patch set.
+func CollectDocumentPatches(src []byte, snapshot document.DocumentSnapshot) ([]SourcePatch, int, int, error) {
 	if len(src) == 0 {
 		return nil, 0, 0, nil
 	}
 
-	tableFixed := tablefix.Preprocess(src)
-	tablePatches := collectTablePatchesFromPreprocess(src, tableFixed)
+	var tablePatches []SourcePatch
+	var tableFixed []byte
+	if snapshot.FullResetOnly {
+		// Full-reset documents (reference definitions) are rendered as a
+		// single unit and carry no per-block snapshot, so fall back to
+		// whole-document table preprocessing, matching the renderer's
+		// full-document path exactly.
+		tableFixed = tablefix.Preprocess(src)
+		tablePatches = collectTablePatchesFromPreprocess(src, tableFixed)
+	} else {
+		tablePatches = CollectTablePatches(snapshot)
+		tableFixed = Apply(src, tablePatches)
+	}
 
 	mathPatches, err := CollectMathPatches(tableFixed)
 	if err != nil {
