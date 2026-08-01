@@ -2,6 +2,8 @@ package mathfix
 
 import (
 	"strings"
+
+	"github.com/mengkeat/yamdview/internal/mathchars"
 )
 
 // Diagnostic represents an issue found during math conversion.
@@ -201,7 +203,7 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	// Find seed positions: Unicode math chars not inside code spans.
 	var seeds []int
 	for i, r := range runes {
-		if isUnicodeMathChar(r) && !codeRunes[i] {
+		if mathchars.IsUnicodeMathChar(r) && !codeRunes[i] {
 			seeds = append(seeds, i)
 		}
 	}
@@ -399,7 +401,7 @@ func matchOpening(opening rune) rune {
 // in unrelated text (e.g. "0.551" from "0.551 m/s²").
 func canExtendLeft(r rune, runes []rune, pos int) bool {
 	switch {
-	case isUnicodeMathChar(r):
+	case mathchars.IsUnicodeMathChar(r):
 		return true
 	case r >= '0' && r <= '9':
 		return true
@@ -422,7 +424,7 @@ func canExtendLeft(r rune, runes []rune, pos int) bool {
 // otherwise 2-letter words are also accepted for cases like "dx".
 func canExtendRight(r rune, runes []rune, pos int) bool {
 	switch {
-	case isUnicodeMathChar(r):
+	case mathchars.IsUnicodeMathChar(r):
 		return true
 	case r >= '0' && r <= '9':
 		return true
@@ -446,7 +448,7 @@ func canExtendRight(r rune, runes []rune, pos int) bool {
 // the space looks math-like.
 func canExtendThroughSpace(r rune, runes []rune, pos int) bool {
 	switch {
-	case isUnicodeMathChar(r):
+	case mathchars.IsUnicodeMathChar(r):
 		return true
 	case r >= '0' && r <= '9':
 		return true

@@ -1,8 +1,9 @@
 package mathfix
 
 import (
-	"strings"
 	"unicode"
+
+	"github.com/mengkeat/yamdview/internal/mathchars"
 )
 
 // HasUnicodeMath reports whether text contains Unicode characters used in math
@@ -10,7 +11,7 @@ import (
 // subscripts, blackboard bold, or math fractions).
 func HasUnicodeMath(text string) bool {
 	for _, r := range text {
-		if isUnicodeMathChar(r) {
+		if mathchars.IsUnicodeMathChar(r) {
 			return true
 		}
 	}
@@ -29,22 +30,22 @@ func Score(text string) float64 {
 		}
 		totalNonSpace++
 
-		if !isUnicodeMathChar(r) {
+		if !mathchars.IsUnicodeMathChar(r) {
 			continue
 		}
 
 		switch {
-		case isMathOperator(r):
+		case mathchars.IsMathOperator(r):
 			ops++
-		case isGreekLetter(r):
+		case mathchars.IsGreekLetter(r):
 			greek++
-		case isSuperscript(r):
+		case mathchars.IsSuperscript(r):
 			super++
-		case isSubscript(r):
+		case mathchars.IsSubscript(r):
 			sub++
-		case isBlackboardBold(r):
+		case mathchars.IsBlackboardBold(r):
 			bbold++
-		case isMathFraction(r):
+		case mathchars.IsMathFraction(r):
 			frac++
 		}
 	}
@@ -97,59 +98,5 @@ func Score(text string) float64 {
 	return score
 }
 
-// isUnicodeMathChar reports whether r is any Unicode math character we can
-// convert to TeX.
-func isUnicodeMathChar(r rune) bool {
-	if r == '√' {
-		return true
-	}
-	if _, ok := charMap[r]; ok {
-		return true
-	}
-	if _, ok := superMap[r]; ok {
-		return true
-	}
-	if _, ok := subMap[r]; ok {
-		return true
-	}
-	return false
-}
-
-// isMathOperator reports whether r is a Unicode math operator or symbol.
-func isMathOperator(r rune) bool {
-	if r == '√' {
-		return true
-	}
-	return isUnicodeMathChar(r) && !isGreekLetter(r) && !isSuperscript(r) &&
-		!isSubscript(r) && !isBlackboardBold(r) && !isMathFraction(r)
-}
-
-// isGreekLetter reports whether r is a Greek letter used in math.
-func isGreekLetter(r rune) bool {
-	_, ok := charMap[r]
-	return ok && (unicode.In(r, unicode.Greek) || r == 'ℓ')
-}
-
-// isSuperscript reports whether r is a Unicode superscript character.
-func isSuperscript(r rune) bool {
-	_, ok := superMap[r]
-	return ok
-}
-
-// isSubscript reports whether r is a Unicode subscript character.
-func isSubscript(r rune) bool {
-	_, ok := subMap[r]
-	return ok
-}
-
-// isBlackboardBold reports whether r is a Unicode blackboard bold character.
-func isBlackboardBold(r rune) bool {
-	tex, ok := charMap[r]
-	return ok && strings.HasPrefix(tex, `\mathbb{`)
-}
-
-// isMathFraction reports whether r is a Unicode fraction character.
-func isMathFraction(r rune) bool {
-	tex, ok := charMap[r]
-	return ok && strings.HasPrefix(tex, `\frac{`)
-}
+// Character classification is owned by the mathchars package, shared with
+// the table repair pipeline.

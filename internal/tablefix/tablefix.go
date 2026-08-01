@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mengkeat/yamdview/internal/mathchars"
 	"github.com/mengkeat/yamdview/internal/mdfence"
 )
 
@@ -665,19 +666,11 @@ func isMathOperator(r rune) bool {
 // regular prose and table headers.
 func isStrongMathChar(r rune) bool {
 	// Greek letters are the strongest signal.
-	if r >= 'α' && r <= 'ω' {
-		switch r {
-		case 'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ',
-			'ν', 'ξ', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω':
-			return true
-		}
+	if mathchars.IsGreekLetter(r) {
+		return true
 	}
-	switch r {
-	case 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Υ', 'Φ', 'Ψ', 'Ω':
-		return true
-	case 'ϵ', 'ϑ', 'ϕ', 'ϱ', 'ℓ':
-		return true
 	// Specialized math symbols unlikely in regular text.
+	switch r {
 	case '∀', '∃', '∈', '∉', '∑', '∏', '∫', '∮', '∂', '∇',
 		'⊂', '⊃', '⊆', '⊇', '∪', '∩', '∅',
 		'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ', 'ℙ', 'ℍ', '𝔽':
@@ -688,42 +681,10 @@ func isStrongMathChar(r rune) bool {
 
 // isUnicodeMathChar reports whether r is a Unicode math character that may
 // appear in table headers with absolute value notation (e.g. ω, ·, ×, ²).
-// This mirrors mathfix.isUnicodeMathChar but avoids importing that package.
+// The classification is owned by the mathchars package, shared with the math
+// conversion pipeline so the two cannot drift apart.
 func isUnicodeMathChar(r rune) bool {
-	// Greek lowercase
-	if r >= 'α' && r <= 'ω' {
-		switch r {
-		case 'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ',
-			'ν', 'ξ', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω':
-			return true
-		}
-	}
-	// Greek uppercase
-	switch r {
-	case 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Υ', 'Φ', 'Ψ', 'Ω':
-		return true
-	}
-	// Math operators and symbols commonly used in table headers
-	switch r {
-	case '·', '×', '÷', '±', '∓', '≠', '≈', '≤', '≥', '∞',
-		'²', '³', '⁰', '¹', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹',
-		'°', '∂', '∫', '∑', '∏', '√', '∇', '∈', '∉', '∀', '∃',
-		'→', '←', '↔', '↓', '↑', '⇒', '⇔', '↦',
-		'⊂', '⊃', '⊆', '⊇', '∪', '∩', '∅',
-		'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ', 'ℙ', 'ℍ',
-		'−', '∝', '∼', '≅', '≡', '⊥', '∠', '‖',
-		'½', '⅓', '⅔', '¼', '¾', '…', '∘', '⋆',
-		'⊕', '⊗', '¬', '∧', '∨', 'ℓ', 'ϵ', 'ϑ', 'ϕ', 'ϱ':
-		return true
-	}
-	// Superscripts and subscripts
-	if r >= '⁰' && r <= '⁾' {
-		return true
-	}
-	if r >= '₀' && r <= '₎' {
-		return true
-	}
-	return false
+	return mathchars.IsUnicodeMathChar(r)
 }
 
 func hasTablePipe(line string) bool {
