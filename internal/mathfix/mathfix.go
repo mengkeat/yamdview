@@ -419,9 +419,10 @@ func canExtendLeft(r rune, runes []rune, pos int) bool {
 	return false
 }
 
-// canExtendRight reports whether character at position pos can be included when
-// extending right. If spaceCrossed is true, only single letters are allowed;
-// otherwise 2-letter words are also accepted for cases like "dx".
+// canExtendRight reports whether the character at position pos can be included
+// when extending right. Directly adjacent 2-letter words are accepted for
+// cases like "dx"; the stricter single-letter rule after a space gap is
+// enforced by canExtendThroughSpace.
 func canExtendRight(r rune, runes []rune, pos int) bool {
 	switch {
 	case mathchars.IsUnicodeMathChar(r):

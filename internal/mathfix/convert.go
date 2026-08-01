@@ -164,5 +164,5 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 }
 
 func isAlphaOrDigit(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+	return isASCIIAlpha(r) || (r >= '0' && r <= '9')
 }

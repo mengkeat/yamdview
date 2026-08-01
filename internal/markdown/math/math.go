@@ -380,9 +380,8 @@ func (r *mathHTMLRenderer) renderDefaultFencedCode(w util.BufWriter, source []by
 
 // TeX delimiters to strip from math content.
 var (
-	dollarDelimRe      = regexp.MustCompile(`^\$+|\$+$`)
-	backslashParenRe   = regexp.MustCompile(`^\\\(|\\\)$`)
-	backslashBracketRe = regexp.MustCompile(`^\\\[|\\\]$`)
+	dollarDelimRe    = regexp.MustCompile(`^\$+|\$+$`)
+	backslashParenRe = regexp.MustCompile(`^\\\(|\\\)$`)
 )
 
 func extractInlineTeX(source []byte, node gast.Node) string {
@@ -441,11 +440,7 @@ func stripBlockDelimiters(line []byte, lineIdx int, totalLines int) []byte {
 }
 
 func escapeHTMLAttr(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, `"`, "&quot;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
+	return string(util.EscapeHTML([]byte(s)))
 }
 
 // ── Extension ────────────────────────────────────────────

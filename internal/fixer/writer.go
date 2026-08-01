@@ -10,8 +10,8 @@ import (
 )
 
 // Apply produces the new file content by applying validated patches in order.
-// Patches must be sorted by StartByte and non-overlapping. Use SortPatches
-// before calling if the input order is unknown.
+// Patches are sorted internally; overlapping patches are skipped to preserve
+// well-formedness.
 func Apply(src []byte, patches []SourcePatch) []byte {
 	if len(patches) == 0 {
 		out := make([]byte, len(src))

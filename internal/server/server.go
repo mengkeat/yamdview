@@ -4,6 +4,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -25,6 +26,9 @@ const (
 	ExportViewLaptop  ExportView = "laptop"
 	ExportViewDesktop ExportView = "desktop"
 )
+
+// ExportViewNames lists the recognised viewport targets, for error messages.
+const ExportViewNames = "phone, tablet, laptop, desktop"
 
 // ValidExportView reports whether v is a recognised viewport target.
 func ValidExportView(v string) bool {
@@ -112,6 +116,10 @@ type sseEvent struct {
 	name string
 	data string
 }
+
+// sseEventPatch names the SSE event carrying block-level DOM patch ops.
+// The full-reset event reuses document.OpReset.
+const sseEventPatch = "patch"
 
 type resetPayload struct {
 	Op   string `json:"op"`
@@ -219,7 +227,9 @@ func (s *Server) URL() string {
 // Start begins serving HTTP requests in a new goroutine.
 func (s *Server) Start() {
 	go func() {
-		_ = s.Serve()
+		if err := s.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("server: %v", err)
+		}
 	}()
 }
 
@@ -250,7 +260,7 @@ func (s *Server) BroadcastReset(content template.HTML) error {
 	}
 
 	s.SetContent(content)
-	s.broadcast(sseEvent{name: "reset", data: string(payload)})
+	s.broadcast(sseEvent{name: document.OpReset, data: string(payload)})
 	return nil
 }
 
@@ -268,7 +278,7 @@ func (s *Server) BroadcastPatches(content template.HTML, ops []document.PatchOp)
 		return fmt.Errorf("marshal patch payload: %w", err)
 	}
 
-	s.broadcast(sseEvent{name: "patch", data: string(payload)})
+	s.broadcast(sseEvent{name: sseEventPatch, data: string(payload)})
 	return nil
 }
 
@@ -388,7 +398,7 @@ func ExportStandalone(assets Assets, data PageData, view string) (string, error)
 
 	if view != "" {
 		if !ValidExportView(view) {
-			return "", fmt.Errorf("unknown --export-view %q (valid: phone, tablet, laptop, desktop)", view)
+			return "", fmt.Errorf("unknown --export-view %q; valid values: %s", view, ExportViewNames)
 		}
 		override := fmt.Sprintf(
 			"\n/* yamdview export: fixed viewport */\n:root{--measure:%s !important}\n",

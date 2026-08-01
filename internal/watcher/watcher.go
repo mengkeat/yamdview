@@ -68,7 +68,7 @@ func (w *Watcher) Watch(ctx context.Context) (<-chan Event, <-chan error) {
 		var timerC <-chan time.Time
 		pending := false
 
-		stopTimer := func() {
+		drainTimer := func() {
 			if timer == nil {
 				return
 			}
@@ -78,6 +78,10 @@ func (w *Watcher) Watch(ctx context.Context) (<-chan Event, <-chan error) {
 				default:
 				}
 			}
+		}
+
+		stopTimer := func() {
+			drainTimer()
 			timer = nil
 			timerC = nil
 		}
@@ -89,12 +93,7 @@ func (w *Watcher) Watch(ctx context.Context) (<-chan Event, <-chan error) {
 				timerC = timer.C
 				return
 			}
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			drainTimer()
 			timer.Reset(w.debounce)
 		}
 

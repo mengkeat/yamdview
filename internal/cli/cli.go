@@ -66,8 +66,9 @@ func Parse(args []string) (Config, error) {
 
 	if *exportView != "" && !server.ValidExportView(*exportView) {
 		return Config{}, fmt.Errorf(
-			"unknown --export-view %q; valid values: phone, tablet, laptop, desktop",
+			"unknown --export-view %q; valid values: %s",
 			*exportView,
+			server.ExportViewNames,
 		)
 	}
 

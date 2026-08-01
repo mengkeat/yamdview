@@ -33,7 +33,7 @@ const (
 	BlockUnknown       BlockKind = "unknown"
 )
 
-// Diagnostic is reserved for future per-block warnings and errors.
+// Diagnostic is a per-block warning or error surfaced during rendering.
 type Diagnostic struct {
 	Severity  string `json:"severity"`
 	Code      string `json:"code"`
