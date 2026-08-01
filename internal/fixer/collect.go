@@ -206,7 +206,7 @@ func hasTextFenceCandidate(src []byte) bool {
 func diffLineRanges(original, modified []byte, reason string, source PatchSource, confidence float64) []SourcePatch {
 	oldLines := splitLinesKeep(original)
 	newLines := splitLinesKeep(modified)
-	oldOffsets := lineOffsets(original, oldLines)
+	oldOffsets := lineOffsets(oldLines)
 
 	matches := lcsMatches(oldLines, newLines)
 	var patches []SourcePatch
@@ -295,12 +295,17 @@ type lineMatch struct {
 	new int
 }
 
+// maxDiffMatrixCells bounds the LCS matrix so pathologically large diffs
+// degrade to a single whole-range patch instead of a large allocation.
+const maxDiffMatrixCells = 250_000
+
 // lcsMatches is a simple line-level longest-common-subsequence match finder
-// over potentially multi-line strings. Memory is O(n*m); callers are expected
-// to bound the inputs upstream.
+// over potentially multi-line strings. Memory is O(n*m); when the matrix
+// would exceed maxDiffMatrixCells it returns no matches, which causes the
+// caller to emit a single whole-range patch.
 func lcsMatches(oldLines, newLines []string) []lineMatch {
 	n, m := len(oldLines), len(newLines)
-	if n == 0 || m == 0 {
+	if n == 0 || m == 0 || n*m > maxDiffMatrixCells {
 		return nil
 	}
 	dp := make([][]int, n+1)
@@ -356,11 +361,10 @@ func splitLinesKeep(s []byte) []string {
 	return lines
 }
 
-func lineOffsets(src []byte, lines []string) []int {
+func lineOffsets(lines []string) []int {
 	offsets := make([]int, len(lines))
 	pos := 0
 	for i, l := range lines {
-		_ = src
 		offsets[i] = pos
 		pos += len(l)
 	}

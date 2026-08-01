@@ -177,37 +177,9 @@ func atomicWrite(path string, contents []byte, perm os.FileMode) error {
 	return nil
 }
 
-// writeFileAtomic is a small wrapper used for backup files. It tries to keep
-// the atomicity guarantee even for backups, so a partially-written backup
-// does not overwrite an existing one.
+// writeFileAtomic writes backup files atomically so a partially-written
+// backup never overwrites an existing one. It shares the implementation
+// with the main atomic writer.
 func writeFileAtomic(path string, contents []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(contents); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Chmod(tmpName, perm); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return atomicWrite(path, contents, perm)
 }

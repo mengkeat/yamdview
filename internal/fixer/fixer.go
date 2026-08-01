@@ -28,8 +28,8 @@ const (
 	WriteModeInPlace WriteMode = "in-place"
 )
 
-// ParseWriteMode converts a CLI string into a WriteMode. Empty input and
-// unknown values are rejected so misconfiguration is loud.
+// ParseWriteMode converts a CLI string into a WriteMode. Empty input maps to
+// WriteModeNever; unknown values are rejected so misconfiguration is loud.
 func ParseWriteMode(s string) (WriteMode, error) {
 	switch WriteMode(strings.ToLower(strings.TrimSpace(s))) {
 	case "", WriteModeNever:
@@ -99,7 +99,7 @@ func ValidatePatches(src []byte, patches []SourcePatch) error {
 	}
 	sorted := make([]SourcePatch, len(patches))
 	copy(sorted, patches)
-	sortByOffset(sorted)
+	sorted = SortPatches(sorted)
 	for i, p := range sorted {
 		if p.StartByte == p.EndByte && p.OldText == "" {
 			return fmt.Errorf("%w at index %d", ErrPatchEmptyOld, i)
@@ -115,15 +115,4 @@ func ValidatePatches(src []byte, patches []SourcePatch) error {
 		}
 	}
 	return nil
-}
-
-func sortByOffset(patches []SourcePatch) {
-	// Insertion sort: patch sets are typically small (a handful of blocks).
-	for i := 1; i < len(patches); i++ {
-		j := i
-		for j > 0 && patches[j-1].StartByte > patches[j].StartByte {
-			patches[j-1], patches[j] = patches[j], patches[j-1]
-			j--
-		}
-	}
 }
