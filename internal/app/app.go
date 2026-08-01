@@ -141,14 +141,16 @@ func (a *App) serve() error {
 	return nil
 }
 
-// readAndSnapshot reads the Markdown file and builds a block-oriented snapshot.
+// readAndSnapshot reads the Markdown file and builds a block-oriented
+// snapshot. prev supplies the previous snapshot so unchanged blocks can be
+// reused without re-rendering; pass a zero value for the first render.
 func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
 	data, err := os.ReadFile(a.cfg.MarkdownPath)
 	if err != nil {
 		return nil, document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
 	}
 
-	snapshot, err := document.BuildSnapshot(a.md, data)
+	snapshot, err := document.BuildSnapshot(a.md, data, document.DocumentSnapshot{})
 	if err != nil {
 		return nil, document.DocumentSnapshot{}, fmt.Errorf("render markdown: %w", err)
 	}

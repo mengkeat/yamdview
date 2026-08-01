@@ -100,8 +100,16 @@ type DiffResult struct {
 	Reset    bool
 }
 
-// BuildSnapshot segments and renders source into independently patchable blocks.
-func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
+// BuildSnapshot segments and renders source into independently patchable
+// blocks. When prev is supplied, blocks whose (Kind, Source) matches an
+// unused previous block are reused without re-rendering: their HTML,
+// Normalized, Diagnostics, and ID carry over so unchanged blocks keep stable
+// IDs across live reloads. Rendered output is a pure function of the source,
+// so a reused block is byte-identical to a fresh render of the same source;
+// only tablefix/mathfix/goldmark work is skipped. A zero-value prev renders
+// every block fresh, identical to the pre-caching behavior. FullResetOnly
+// documents render as a single unit and never reuse previous blocks.
+func BuildSnapshot(md goldmark.Markdown, src []byte, prev DocumentSnapshot) (DocumentSnapshot, error) {
 	snapshot := DocumentSnapshot{}
 
 	if reason, ok := fullResetReason(src); ok {
@@ -115,37 +123,139 @@ func BuildSnapshot(md goldmark.Markdown, src []byte) (DocumentSnapshot, error) {
 		return snapshot, nil
 	}
 
+	reuse := newReuseIndex(prev.Blocks)
+	used := make(map[int]bool, len(prev.Blocks))
+
 	spans := segmentBlocks(src)
 	snapshot.Blocks = make([]Block, 0, len(spans))
 	for i, span := range spans {
 		blockSource := string(src[span.start:span.end])
-		renderSource, diagnostics := renderSourceForBlock(blockSource, span)
-		rendered, err := markdown.Render(md, []byte(renderSource))
-		if err != nil {
-			return DocumentSnapshot{}, err
-		}
 
-		normalized := normalizeSource(blockSource)
-		block := Block{
-			Kind:        span.kind,
-			SourceStart: span.start,
-			SourceEnd:   span.end,
-			StartLine:   span.startLine,
-			EndLine:     span.endLine,
-			Source:      blockSource,
-			Normalized:  renderSource,
-			HTML:        rendered,
-			Diagnostics: diagnostics,
-		}
-		block.ID = blockID(i, block.Kind, normalized)
-		for i := range block.Diagnostics {
-			block.Diagnostics[i].BlockID = block.ID
+		var block Block
+		if j, ok := reuse.take(used, i, span.kind, blockSource); ok {
+			block = reusedBlock(prev.Blocks[j], span, blockSource)
+		} else {
+			renderSource, diagnostics := renderSourceForBlock(blockSource, span)
+			rendered, err := markdown.Render(md, []byte(renderSource))
+			if err != nil {
+				return DocumentSnapshot{}, err
+			}
+
+			block = Block{
+				Kind:        span.kind,
+				SourceStart: span.start,
+				SourceEnd:   span.end,
+				StartLine:   span.startLine,
+				EndLine:     span.endLine,
+				Source:      blockSource,
+				Normalized:  renderSource,
+				HTML:        rendered,
+				Diagnostics: diagnostics,
+			}
+			block.ID = blockID(i, block.Kind, normalizeSource(blockSource))
+			for i := range block.Diagnostics {
+				block.Diagnostics[i].BlockID = block.ID
+			}
 		}
 		snapshot.Blocks = append(snapshot.Blocks, block)
 	}
 
+	ensureUniqueIDs(snapshot.Blocks)
 	snapshot.HTML = RenderBlocks(snapshot.Blocks)
 	return snapshot, nil
+}
+
+// blockKey identifies a previous block by content for reuse matching.
+type blockKey struct {
+	kind   BlockKind
+	source string
+}
+
+// reuseIndex maps previous block content to the block indices holding it so
+// unchanged blocks can be matched without re-running the render pipeline.
+type reuseIndex map[blockKey][]int
+
+func newReuseIndex(blocks []Block) reuseIndex {
+	index := make(reuseIndex, len(blocks))
+	for j, b := range blocks {
+		key := blockKey{kind: b.Kind, source: b.Source}
+		index[key] = append(index[key], j)
+	}
+	return index
+}
+
+// take claims the unused previous block with the same content closest to new
+// position i, preferring the block at the same index. Each previous block is
+// claimed at most once, so identical repeated blocks keep distinct IDs. It
+// returns false when no previous block matches, which falls back to a fresh
+// render (correct, merely slower).
+func (r reuseIndex) take(used map[int]bool, i int, kind BlockKind, source string) (int, bool) {
+	indices := r[blockKey{kind: kind, source: source}]
+	if len(indices) == 0 {
+		return 0, false
+	}
+	best := -1
+	bestDist := int(^uint(0) >> 1)
+	for _, j := range indices {
+		if used[j] {
+			continue
+		}
+		dist := i - j
+		if dist < 0 {
+			dist = -dist
+		}
+		if dist < bestDist {
+			best = j
+			bestDist = dist
+			if dist == 0 {
+				break
+			}
+		}
+	}
+	if best == -1 {
+		return 0, false
+	}
+	used[best] = true
+	return best, true
+}
+
+// reusedBlock rebuilds a block from a previous snapshot's rendering, keeping
+// the previous ID, HTML, Normalized, and diagnostic content but re-deriving
+// every position-derived field (source offsets, line numbers) from the current
+// span so the result matches a fresh render exactly. Diagnostics are
+// deep-copied because their line numbers are updated in place.
+func reusedBlock(prev Block, span blockSpan, blockSource string) Block {
+	block := prev
+	block.Source = blockSource
+	block.SourceStart = span.start
+	block.SourceEnd = span.end
+	block.StartLine = span.startLine
+	block.EndLine = span.endLine
+	block.Diagnostics = append([]Diagnostic(nil), prev.Diagnostics...)
+	for i := range block.Diagnostics {
+		block.Diagnostics[i].StartLine = span.startLine
+		block.Diagnostics[i].EndLine = span.endLine
+	}
+	return block
+}
+
+// ensureUniqueIDs guarantees every block has a distinct ID. Fresh renders are
+// unique by construction (the ordinal is part of the hash input), but a reused
+// ID can collide with a freshly computed ordinal-based ID when identical
+// blocks are reordered, so deduplicate as a safety net. Diagnostics carry the
+// block ID, so they are updated alongside.
+func ensureUniqueIDs(blocks []Block) {
+	used := make(map[string]bool, len(blocks))
+	for i := range blocks {
+		id := uniqueID(blocks[i].ID, used)
+		if id == blocks[i].ID {
+			continue
+		}
+		blocks[i].ID = id
+		for j := range blocks[i].Diagnostics {
+			blocks[i].Diagnostics[j].BlockID = id
+		}
+	}
 }
 
 // Diff computes patch operations from oldSnapshot to nextSnapshot. Unchanged

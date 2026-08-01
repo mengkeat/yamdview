@@ -656,7 +656,7 @@ func TestPersistFixesRejectsStalePatches(t *testing.T) {
 	// Build a snapshot from a stale source to simulate a race where the file
 	// has changed since the patches were computed.
 	staleSrc := []byte("Name | Score\nAlice | 10\nBob | 9\n")
-	staleSnapshot, err := document.BuildSnapshot(markdown.NewRenderer(), staleSrc)
+	staleSnapshot, err := document.BuildSnapshot(markdown.NewRenderer(), staleSrc, document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}

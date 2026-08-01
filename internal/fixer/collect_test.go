@@ -339,7 +339,7 @@ func TestCollectDocumentPatchesFullResetRepairsEveryTable(t *testing.T) {
 func buildSnapshot(t *testing.T, src string) document.DocumentSnapshot {
 	t.Helper()
 	md := markdown.NewRenderer()
-	snapshot, err := document.BuildSnapshot(md, []byte(src))
+	snapshot, err := document.BuildSnapshot(md, []byte(src), document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
