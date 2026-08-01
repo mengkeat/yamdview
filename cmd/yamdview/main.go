@@ -31,6 +31,7 @@ func main() {
 		ExportView:   cfg.ExportView,
 		WriteFixes:   cfg.WriteFixes,
 		BackupDir:    cfg.BackupDir,
+		LLM:          cfg.LLM,
 	}, assets)
 
 	if err := application.Run(); err != nil {

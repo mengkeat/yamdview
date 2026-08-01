@@ -16,6 +16,8 @@ import (
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/fixer"
+	"github.com/mengkeat/yamdview/internal/llm"
+	"github.com/mengkeat/yamdview/internal/llmapp"
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/watcher"
@@ -32,6 +34,7 @@ type Config struct {
 	ExportView   string // viewport target for export
 	WriteFixes   fixer.WriteMode
 	BackupDir    string // directory for backup files when WriteFixes is backup
+	LLM          llm.Settings
 }
 
 // App orchestrates rendering, serving, and browser opening.
@@ -39,15 +42,84 @@ type App struct {
 	cfg    Config
 	md     goldmark.Markdown
 	assets server.Assets
+
+	// LLM repair state. provider is nil when repair is disabled (mode off) or
+	// when provider construction failed. llmMode governs whether the render
+	// path runs repairs automatically.
+	provider   llm.Provider
+	llmMode    llm.Mode
+	llmTimeout time.Duration
 }
 
-// New creates a new App with the given configuration.
+// New creates a new App with the given configuration. LLM provider
+// construction failures are logged as warnings rather than fatal: a
+// misconfigured repair backend must not prevent the viewer from rendering.
 func New(cfg Config, assets server.Assets) *App {
-	return &App{
-		cfg:    cfg,
-		md:     markdown.NewRenderer(),
-		assets: assets,
+	provider, mode, timeout, err := buildLLMProvider(cfg.LLM)
+	if err != nil {
+		log.Printf("warning: llm provider not available: %v", err)
 	}
+	return &App{
+		cfg:        cfg,
+		md:         markdown.NewRenderer(),
+		assets:     assets,
+		provider:   provider,
+		llmMode:    mode,
+		llmTimeout: timeout,
+	}
+}
+
+// buildLLMProvider loads the optional config file and resolves the provider
+// described by settings. It returns a nil provider (and no error) when repair
+// is off.
+func buildLLMProvider(s llm.Settings) (llm.Provider, llm.Mode, time.Duration, error) {
+	if s.Mode == llm.ModeOff {
+		return nil, s.Mode, s.Timeout, nil
+	}
+	var cfg llm.Config
+	if s.ConfigPath != "" {
+		data, err := os.ReadFile(s.ConfigPath)
+		if err != nil {
+			return nil, s.Mode, s.Timeout, fmt.Errorf("read llm config: %w", err)
+		}
+		cfg, err = llm.ParseConfig(data)
+		if err != nil {
+			return nil, s.Mode, s.Timeout, err
+		}
+	}
+	provider, err := llm.ResolveProvider(cfg, s)
+	if err != nil {
+		return nil, s.Mode, s.Timeout, err
+	}
+	return provider, s.Mode, s.Timeout, nil
+}
+
+// llmContext returns a context bounded by the configured per-call timeout.
+func (a *App) llmContext(parent context.Context) (context.Context, context.CancelFunc) {
+	timeout := a.llmTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+// repairSnapshot runs the LLM repair pass over the snapshot when repair is
+// enabled and in automatic mode. It never mutates the caller's snapshot:
+// accepted repairs produce a new snapshot; rejected/stale/timed-out/failed
+// candidates are reported as diagnostics and leave the rendering unchanged.
+// It returns the (possibly repaired) snapshot and a flat diagnostic list.
+func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.DocumentSnapshot) (document.DocumentSnapshot, []document.Diagnostic) {
+	if a.provider == nil || a.llmMode != llm.ModeAuto {
+		return snap, nil
+	}
+	res := llmapp.Repair(ctx, a.md, a.provider, snap, src)
+	for _, d := range res.Diagnostics {
+		log.Printf("llm: %s lines %d-%d: %s", d.Code, d.StartLine, d.EndLine, d.Message)
+	}
+	if res.Applied > 0 || res.Rejected > 0 {
+		log.Printf("llm: %d applied, %d rejected via %s", res.Applied, res.Rejected, a.provider.Name())
+	}
+	return res.Snapshot, res.Diagnostics
 }
 
 // Run executes the main application flow: export or serve + live reload.
@@ -70,6 +142,12 @@ func (a *App) exportStandalone() error {
 			return fmt.Errorf("persist fixes: %w", err)
 		}
 	}
+
+	// LLM repair is render-only and runs after heuristic persistence so it can
+	// never accidentally write a provider-suggested change to the source file.
+	ctx, cancel := a.llmContext(context.Background())
+	defer cancel()
+	snapshot, _ = a.repairSnapshot(ctx, src, snapshot)
 
 	html, err := server.ExportStandalone(a.assets, server.PageData{
 		Title:   a.cfg.MarkdownPath,
@@ -102,6 +180,9 @@ func (a *App) serve() error {
 			log.Printf("warning: could not persist fixes: %v", err)
 		}
 	}
+	repairCtx, repairCancel := a.llmContext(context.Background())
+	snapshot, _ = a.repairSnapshot(repairCtx, src, snapshot)
+	repairCancel()
 
 	// Create and start HTTP server.
 	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
