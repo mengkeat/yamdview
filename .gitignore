@@ -12,6 +12,11 @@ vendor/
 # Local-only planning artifact; never commit
 PLAN.md
 
+# Local agent tooling state (pi todos, installed skills, skill lockfile)
+.agents/
+.pi/
+skills-lock.json
+
 # OS/editor noise
 .DS_Store
 *.swp
