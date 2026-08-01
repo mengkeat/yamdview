@@ -154,6 +154,210 @@ func TestFencedCodeBlockNotMathEscapesCode(t *testing.T) {
 	}
 }
 
+// ── Fenced math block parser tests ───────────────────────
+
+func TestFencedMathExactHTML(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("```math\n\\sum_{i=1}^{n} i\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := `<div class="math math-display" data-tex="\sum_{i=1}^{n} i"></div>` + "\n"
+	if buf.String() != want {
+		t.Errorf("fenced math HTML changed:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
+func TestFencedMathWithExtraInfoTokens(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("```math line-numbers\nx^2\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="x^2"`) {
+		t.Errorf("extra info tokens after math should not change rendering: %s", got)
+	}
+	if !strings.Contains(got, `math-display`) {
+		t.Errorf("expected display math: %s", got)
+	}
+	if strings.Contains(got, "<code") {
+		t.Errorf("fenced math should not render as code: %s", got)
+	}
+}
+
+func TestFencedMathLanguageIsCaseInsensitive(t *testing.T) {
+	// The document snapshot layer already classifies "```Math" as a
+	// math block; the renderer now matches that classification.
+	md := newTestRenderer()
+	src := []byte("```Math\nx^2\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="x^2"`) {
+		t.Errorf("case-insensitive math fence should render math: %s", got)
+	}
+	if strings.Contains(got, "language-Math") {
+		t.Errorf("case-insensitive math fence should not render as code: %s", got)
+	}
+}
+
+func TestFencedMathUnclosed(t *testing.T) {
+	// An unterminated ```math fence renders everything to EOF as math.
+	md := newTestRenderer()
+	src := []byte("```math\ne^{i\\pi} + 1 = 0\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="e^{i\pi} + 1 = 0"`) {
+		t.Errorf("unclosed math fence should render as math: %s", got)
+	}
+}
+
+func TestFencedMathSingleLineIsNotMathFence(t *testing.T) {
+	// goldmark refuses backtick fences whose info string contains a
+	// backtick, so "```math x^2 ```" stays a paragraph + code span.
+	md := newTestRenderer()
+	src := []byte("```math x^2 ```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "<p><code>math x^2 </code></p>\n"
+	if buf.String() != want {
+		t.Errorf("single-line ```math should not be a math fence:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
+func TestTildeMathFence(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("~~~math\nx^2\n~~~\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="x^2"`) {
+		t.Errorf("tilde math fence should render math: %s", got)
+	}
+	if !strings.Contains(got, `math-display`) {
+		t.Errorf("tilde math fence should be display math: %s", got)
+	}
+}
+
+func TestFencedTextNotMath(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("```text\nhello\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "<pre><code class=\"language-text\">hello\n</code></pre>\n"
+	if buf.String() != want {
+		t.Errorf("```text fence changed:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
+func TestTildeJSNotMath(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("~~~js\nvar x = 1;\n~~~\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "<pre><code class=\"language-js\">var x = 1;\n</code></pre>\n"
+	if buf.String() != want {
+		t.Errorf("~~~js fence changed:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
+func TestFencedMathDollarContentPreserved(t *testing.T) {
+	// extractBlockTeX strips leading/trailing "$$" only from the first and
+	// last lines, matching the previous renderer's behavior.
+	md := newTestRenderer()
+	src := []byte("```math\n$$x$$\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="x"`) {
+		t.Errorf("single-line $$ content should have delimiters stripped: %s", got)
+	}
+}
+
+func TestFencedMathFenceLikeContentIsNotClose(t *testing.T) {
+	// A line starting with the fence marker but followed by text is content
+	// (goldmark only closes on a blank run of the marker).
+	md := newTestRenderer()
+	src := []byte("```math\n```more\ny\n```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, "data-tex=\"```more\ny\"") {
+		t.Errorf("fence-like content line should stay inside the math block: %s", got)
+	}
+}
+
+func TestFencedMathLongerFenceCloses(t *testing.T) {
+	// A longer run of the fence character closes the fence, matching
+	// goldmark's fenced-code semantics.
+	md := newTestRenderer()
+	src := []byte("```math\nx^2\n````\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, `data-tex="x^2"`) {
+		t.Errorf("longer fence run should close the math block: %s", got)
+	}
+}
+
+func TestFencedMathIndentedCloseIsContent(t *testing.T) {
+	// A closing-fence line indented 4+ columns is content, matching
+	// goldmark's fenced-code semantics.
+	md := newTestRenderer()
+	src := []byte("```math\nx^2\n    ```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, "data-tex=\"x^2\n    ```\"") {
+		t.Errorf("4-space-indented fence line should stay inside the math block: %s", got)
+	}
+}
+
+func TestFencedMathInBlockquote(t *testing.T) {
+	md := newTestRenderer()
+	src := []byte("> ```math\n> x^2\n> y^2\n> ```\n")
+	var buf strings.Builder
+	if err := md.Convert(src, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := "<blockquote>\n<div class=\"math math-display\" data-tex=\"x^2\ny^2\"></div>\n</blockquote>\n"
+	if buf.String() != want {
+		t.Errorf("math fence inside blockquote changed:\n got: %q\nwant: %q", buf.String(), want)
+	}
+}
+
 func TestNonMathUnaffected(t *testing.T) {
 	md := newTestRenderer()
 	src := []byte("Hello world. This has no math.\n")
