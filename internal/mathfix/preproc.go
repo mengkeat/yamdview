@@ -16,7 +16,7 @@ import (
 // modified. Fenced code blocks are preserved except for short ```text fences
 // that look like displayed equations.
 func Preprocess(src []byte) []byte {
-	if !HasUnicodeMath(string(src)) && !hasTextFenceCandidate(src) {
+	if !HasUnicodeMath(string(src)) && !HasTextFenceCandidate(src) {
 		return src
 	}
 
@@ -160,7 +160,10 @@ func isTextFenceInfo(info string) bool {
 	return strings.EqualFold(info, "text") || strings.EqualFold(info, "txt")
 }
 
-func hasTextFenceCandidate(src []byte) bool {
+// HasTextFenceCandidate reports whether src contains a fenced code block with
+// a text/txt info string — the only fence kind the preprocessor treats as
+// containing displayable equations.
+func HasTextFenceCandidate(src []byte) bool {
 	for _, line := range bytes.Split(src, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
 		if marker := mdfence.Marker(trimmed); marker != "" && isTextFenceInfo(mdfence.Info(trimmed)) {

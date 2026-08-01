@@ -44,7 +44,7 @@ func CollectMathPatches(src []byte) ([]SourcePatch, error) {
 	if len(src) == 0 {
 		return nil, nil
 	}
-	if !mathfix.HasUnicodeMath(string(src)) && !hasTextFenceCandidate(src) {
+	if !mathfix.HasUnicodeMath(string(src)) && !mathfix.HasTextFenceCandidate(src) {
 		return nil, nil
 	}
 	preprocessed := mathfix.Preprocess(src)
@@ -156,48 +156,6 @@ func wholeDocumentPatch(original, final []byte, tableCount, mathCount int) Sourc
 		Confidence: confidence,
 		Source:     source,
 	}
-}
-
-// hasTextFenceCandidate mirrors the relevant guard from mathfix.Preprocess so
-// the CollectMathPatches caller can short-circuit the diff when no work would
-// happen. The detection logic intentionally matches mathfix to avoid false
-// negatives.
-func hasTextFenceCandidate(src []byte) bool {
-	for _, line := range bytes.Split(src, []byte("\n")) {
-		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 {
-			continue
-		}
-		// Cheap fence marker check: must start with three backticks or tildes.
-		if len(trimmed) < 3 {
-			continue
-		}
-		c := trimmed[0]
-		if c != '`' && c != '~' {
-			continue
-		}
-		if trimmed[0] != trimmed[1] || trimmed[1] != trimmed[2] {
-			continue
-		}
-		// Detect a ```text / ~~~text info string.
-		info := bytes.TrimLeft(trimmed, "`~")
-		info = bytes.TrimLeft(info, " \t")
-		if len(info) == 0 {
-			continue
-		}
-		// First whitespace-separated token is the info string.
-		for i := 0; i < len(info); i++ {
-			if info[i] == ' ' || info[i] == '\t' {
-				info = info[:i]
-				break
-			}
-		}
-		lower := string(bytes.ToLower(info))
-		if lower == "text" || lower == "txt" || lower == "math" {
-			return true
-		}
-	}
-	return false
 }
 
 // diffLineRanges computes a line-based diff between original and modified
