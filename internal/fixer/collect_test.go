@@ -1,11 +1,13 @@
 package fixer
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/markdown"
+	"github.com/mengkeat/yamdview/internal/tablefix"
 )
 
 func TestCollectTablePatchesFromMalformedTable(t *testing.T) {
@@ -196,6 +198,141 @@ func TestCollectDocumentPatchesRepairsTableWhenSnapshotNeedsFullReset(t *testing
 	}
 	if !strings.Contains(rewritten, "[docs]: https://example.com") {
 		t.Fatalf("rewritten source dropped reference definition: %q", rewritten)
+	}
+}
+
+// TestCollectTablePatchesMatchPreprocess locks in the equivalence between the
+// snapshot-driven table repairs and the whole-document tablefix.Preprocess
+// pass for realistic block-rendered inputs: multi-table documents, code-span
+// and escaped pipes, table+math combinations, and blockquote/list table
+// forms. Full-reset documents are excluded here: they carry no per-block
+// snapshot and deliberately fall back to whole-document preprocessing
+// (covered by TestCollectDocumentPatchesFullResetRepairsEveryTable and
+// TestCollectDocumentPatchesRepairsTableWhenSnapshotNeedsFullReset).
+func TestCollectTablePatchesMatchPreprocess(t *testing.T) {
+	tests := []string{
+		"Name | Score\nAlice | 10\nBob | 9\n",
+		"| A | B |\n| C | D |\n",
+		"Pattern | Meaning\n`a | b` | inline code\nx \\| y | escaped pipe\n",
+		"Name | Formula\nf | α²\n",
+		"Name | Score\nAlice | 10\n\nA | B\nC | D\n",
+		"α + β = γ\n\nName | Score\nAlice | 10\n",
+		"> Name | Score\n> Alice | 10\n",
+		"- Name | Score\n- Alice | 10\n",
+		"kM· | ω | err (%)\na | b | c\n",
+		"| A | B |\n| :--- | ---: |\n| C | D\n",
+		"Name | Score\nAlice | 10\nBob | 9\nEve | 42 | extra\n",
+		"`a|b` | `c|d`\n`e|f` | `g|h`\n",
+		"Name | Score\r\nAlice | 10\r\n",
+		"| A | B |\n| --- | --- |\n| C | D |\n",
+	}
+
+	for _, src := range tests {
+		t.Run(src, func(t *testing.T) {
+			want := tablefix.Preprocess([]byte(src))
+			snapshot := buildSnapshot(t, src)
+			if snapshot.FullResetOnly {
+				t.Fatal("test case unexpectedly produced a full-reset snapshot")
+			}
+			got := Apply([]byte(src), CollectTablePatches(snapshot))
+			if !bytes.Equal(want, got) {
+				t.Errorf("snapshot table repair diverged from Preprocess:\nwant %q\ngot  %q", want, got)
+			}
+		})
+	}
+}
+
+// TestCollectTablePatchesSeparatorRowFirst documents that a leading
+// separator-style row is treated as its own paragraph by the block renderer,
+// while the data rows that follow form a repairable table block. The snapshot
+// therefore repairs the data rows (matching the rendered output) even though
+// the old whole-document Preprocess pass grouped the separator into the same
+// run and skipped the repair entirely.
+func TestCollectTablePatchesSeparatorRowFirst(t *testing.T) {
+	src := "| --- | --- |\nA | B\nC | D\n"
+	snapshot := buildSnapshot(t, src)
+
+	patches := CollectTablePatches(snapshot)
+	if len(patches) != 1 {
+		t.Fatalf("expected 1 table patch for data rows, got %d", len(patches))
+	}
+	if patches[0].OldText != "A | B\nC | D\n" {
+		t.Errorf("patch should cover only the data rows, got %q", patches[0].OldText)
+	}
+	if !strings.Contains(patches[0].NewText, "| --- | --- |") {
+		t.Errorf("patch should insert a separator, got %q", patches[0].NewText)
+	}
+
+	all, tableCount, _, err := CollectDocumentPatches([]byte(src), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount == 0 {
+		t.Fatal("expected a table repair candidate")
+	}
+	rewritten := string(Apply([]byte(src), all))
+	if rewritten != "| --- | --- |\n| A | B |\n| --- | --- |\n| C | D |\n" {
+		t.Errorf("unexpected rewritten source: %q", rewritten)
+	}
+}
+
+// TestCollectTablePatchesSkipsPipeContentThatIsNotATable pins the behavior
+// for pipe-bearing content that the block renderer does not treat as a table:
+// display math ($$...$$ and \[...\]) and ATX headings. The old whole-document
+// Preprocess pass over-repaired these into tables even though the rendered
+// output shows math/headings; the snapshot-driven path correctly leaves them
+// untouched so persisted fixes match the rendered document.
+func TestCollectTablePatchesSkipsPipeContentThatIsNotATable(t *testing.T) {
+	tests := []string{
+		"$$ a | b $$\nc | d\n",
+		"\\[ a | b \\]\nc | d\n",
+		"## A | B\n## C | D\n",
+	}
+	for _, src := range tests {
+		t.Run(src, func(t *testing.T) {
+			snapshot := buildSnapshot(t, src)
+			if patches := CollectTablePatches(snapshot); len(patches) != 0 {
+				t.Fatalf("expected no table patches, got %d: %+v", len(patches), patches)
+			}
+			all, tableCount, _, err := CollectDocumentPatches([]byte(src), snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tableCount != 0 {
+				t.Fatalf("expected tableCount 0, got %d", tableCount)
+			}
+			if len(all) != 0 {
+				t.Fatalf("expected no document patches, got %d: %+v", len(all), all)
+			}
+		})
+	}
+}
+
+// TestCollectDocumentPatchesFullResetRepairsEveryTable guards the full-reset
+// fallback: when a reference definition forces whole-document rendering, the
+// snapshot has no per-block repairs, so table patches are recomputed with the
+// whole-document Preprocess pass and every table in the document must still
+// be repaired.
+func TestCollectDocumentPatchesFullResetRepairsEveryTable(t *testing.T) {
+	src := "Name | Score\nAlice | 10\n\n[docs]: https://example.com\n\nAnother | Table\nRow | Here\n"
+	snapshot := buildSnapshot(t, src)
+	if !snapshot.FullResetOnly {
+		t.Fatal("expected reference definition to force full-reset snapshot")
+	}
+
+	patches, tableCount, _, err := CollectDocumentPatches([]byte(src), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tableCount < 2 {
+		t.Fatalf("expected repairs for both tables, tableCount=%d", tableCount)
+	}
+	rewritten := string(Apply([]byte(src), patches))
+	if strings.Count(rewritten, "| --- |") < 2 {
+		t.Fatalf("rewritten source missing separators for both tables: %q", rewritten)
+	}
+	if !strings.Contains(rewritten, "[docs]: https://example.com") {
+		t.Fatalf("reference definition should be preserved: %q", rewritten)
 	}
 }
 
