@@ -61,7 +61,7 @@ func (a *App) Run() error {
 // exportStandalone renders the Markdown file to a self-contained HTML document
 // and writes it to the path specified by cfg.Export.
 func (a *App) exportStandalone() error {
-	src, snapshot, err := a.readAndSnapshot()
+	src, snapshot, err := a.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		return fmt.Errorf("render markdown: %w", err)
 	}
@@ -90,7 +90,7 @@ func (a *App) exportStandalone() error {
 // serve renders, starts the HTTP server, opens the browser, and reloads on changes.
 func (a *App) serve() error {
 	// Read, segment, and render the Markdown file.
-	src, snapshot, err := a.readAndSnapshot()
+	src, snapshot, err := a.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
@@ -144,13 +144,13 @@ func (a *App) serve() error {
 // readAndSnapshot reads the Markdown file and builds a block-oriented
 // snapshot. prev supplies the previous snapshot so unchanged blocks can be
 // reused without re-rendering; pass a zero value for the first render.
-func (a *App) readAndSnapshot() ([]byte, document.DocumentSnapshot, error) {
+func (a *App) readAndSnapshot(prev document.DocumentSnapshot) ([]byte, document.DocumentSnapshot, error) {
 	data, err := os.ReadFile(a.cfg.MarkdownPath)
 	if err != nil {
 		return nil, document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
 	}
 
-	snapshot, err := document.BuildSnapshot(a.md, data, document.DocumentSnapshot{})
+	snapshot, err := document.BuildSnapshot(a.md, data, prev)
 	if err != nil {
 		return nil, document.DocumentSnapshot{}, fmt.Errorf("render markdown: %w", err)
 	}
@@ -213,7 +213,7 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 				changes = nil
 				continue
 			}
-			src, next, err := a.readAndSnapshot()
+			src, next, err := a.readAndSnapshot(current)
 			if err != nil {
 				log.Printf("warning: could not reload markdown: %v", err)
 				continue

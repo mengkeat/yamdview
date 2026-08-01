@@ -100,7 +100,7 @@ func startReloadLoopTest(t *testing.T, initial string) (string, *server.Server, 
 	}
 
 	application := New(Config{MarkdownPath: path}, testAssets)
-	_, initialSnapshot, err := application.readAndSnapshot()
+	_, initialSnapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,7 @@ func TestPersistFixesNeverModeLeavesFileUntouched(t *testing.T) {
 		WriteFixes:   "never",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, snapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +471,7 @@ func TestPersistFixesInPlaceRepairsTable(t *testing.T) {
 		WriteFixes:   "in-place",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, snapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +501,7 @@ func TestPersistFixesCombinesTableAndMath(t *testing.T) {
 		WriteFixes:   "in-place",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, snapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestPersistFixesRepairsTableDuringFullResetSnapshot(t *testing.T) {
 		WriteFixes:   "in-place",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, snapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +564,7 @@ func TestPersistFixesBackupCreatesBackup(t *testing.T) {
 		WriteFixes:   "backup",
 	}, testAssets)
 
-	src, snapshot, err := application.readAndSnapshot()
+	src, snapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +737,7 @@ func startReloadLoopTestWithFixes(t *testing.T, initial, mode, backupDir string)
 		WriteFixes:   fixer.WriteMode(mode),
 		BackupDir:    backupDir,
 	}, testAssets)
-	src, initialSnapshot, err := application.readAndSnapshot()
+	src, initialSnapshot, err := application.readAndSnapshot(document.DocumentSnapshot{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,4 +773,68 @@ func startReloadLoopTestWithFixes(t *testing.T, initial, mode, backupDir string)
 	go application.reloadLoop(ctx, srv, changes, watchErrs, initialSnapshot)
 
 	return path, srv, reader, changes
+}
+
+// TestReloadLoopKeepsBlockIDsAfterTopInsertion exercises the live-reload path
+// end to end: the reload builds the next snapshot from the current one
+// (reusing unchanged blocks), diffs it, and broadcasts a minimal patch while
+// unchanged blocks keep their DOM section IDs.
+func TestReloadLoopKeepsBlockIDsAfterTopInsertion(t *testing.T) {
+	path, srv, reader, changes := startReloadLoopTest(t, "# Heading\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n")
+
+	firstID := sectionIDFor(t, srv, "First paragraph.")
+	secondID := sectionIDFor(t, srv, "Second paragraph.")
+
+	if err := os.WriteFile(path, []byte("## Inserted\n\n# Heading\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes <- watcher.Event{Path: path}
+
+	payload := readPatchPayload(t, reader)
+	if len(payload.Ops) != 1 {
+		t.Fatalf("expected 1 patch op, got %+v", payload.Ops)
+	}
+	op := payload.Ops[0]
+	if op.Op != document.OpInsertAfter && op.Op != document.OpInsertBefore {
+		t.Fatalf("expected insert op, got %+v", op)
+	}
+	if !strings.Contains(op.HTML, "Inserted") {
+		t.Fatalf("insert HTML missing new heading:\n%s", op.HTML)
+	}
+
+	if got := sectionIDFor(t, srv, "First paragraph."); got != firstID {
+		t.Errorf("First paragraph section id changed after top insertion: %q → %q", firstID, got)
+	}
+	if got := sectionIDFor(t, srv, "Second paragraph."); got != secondID {
+		t.Errorf("Second paragraph section id changed after top insertion: %q → %q", secondID, got)
+	}
+}
+
+// sectionIDFor fetches the served snapshot and returns the id attribute of the
+// md-block section containing content.
+func sectionIDFor(t *testing.T, srv *server.Server, content string) string {
+	t.Helper()
+
+	snapshot, err := http.Get(srv.URL() + "snapshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(snapshot.Body)
+	snapshot.Body.Close()
+	html := string(body)
+
+	idx := strings.Index(html, content)
+	if idx < 0 {
+		t.Fatalf("snapshot missing %q:\n%s", content, html)
+	}
+	idStart := strings.LastIndex(html[:idx], `id="`)
+	if idStart < 0 {
+		t.Fatalf("no section id before %q:\n%s", content, html)
+	}
+	rest := html[idStart+len(`id="`):]
+	idEnd := strings.Index(rest, `"`)
+	if idEnd < 0 {
+		t.Fatalf("unterminated id attribute before %q", content)
+	}
+	return rest[:idEnd]
 }
