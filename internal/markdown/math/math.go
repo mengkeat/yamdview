@@ -21,6 +21,8 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
+
+	"github.com/mengkeat/yamdview/internal/mdfence"
 )
 
 // ── AST node types ───────────────────────────────────────
@@ -296,6 +298,135 @@ func (b *displayMathBlockParser) CanAcceptIndentedLine() bool {
 	return false
 }
 
+// ── Block parser: ```math and ~~~math fences ─────────────
+
+type mathFenceBlockParser struct{}
+
+var defaultMathFenceBlockParser = &mathFenceBlockParser{}
+
+// NewMathFenceBlockParser returns a BlockParser for fenced math blocks
+// opened with "```math" or "~~~math". Non-math fences fall through to
+// goldmark's own fenced-code parser.
+func NewMathFenceBlockParser() parser.BlockParser {
+	return defaultMathFenceBlockParser
+}
+
+type mathFenceData struct {
+	char   byte // opening fence character ('`' or '~')
+	indent int  // opening fence indent (0-3)
+	length int  // opening fence marker length
+}
+
+var mathFenceContextKey = parser.NewContextKey()
+
+func (b *mathFenceBlockParser) Trigger() []byte {
+	return []byte{'`', '~'}
+}
+
+func (b *mathFenceBlockParser) Open(parent gast.Node, reader text.Reader, pc parser.Context) (gast.Node, parser.State) {
+	line, _ := reader.PeekLine()
+	indent := pc.BlockIndent()
+	if indent < 0 || indent > 3 {
+		return nil, parser.NoChildren
+	}
+
+	trimmed := bytes.TrimSpace(line)
+	marker := mdfence.Marker(trimmed)
+	if marker == "" {
+		// Not a fence at all — leave it to goldmark's fenced-code parser.
+		return nil, parser.NoChildren
+	}
+	if !strings.EqualFold(mdfence.Info(trimmed), "math") {
+		// Ordinary fence (```go, ```text, ...) — goldmark renders it.
+		return nil, parser.NoChildren
+	}
+	// goldmark refuses backtick fences whose info string contains a
+	// backtick (e.g. "```math x^2 ```"). Stay out of its way so that
+	// such lines keep their current paragraph rendering.
+	if marker[0] == '`' && bytes.Contains(trimmed[len(marker):], []byte("`")) {
+		return nil, parser.NoChildren
+	}
+
+	node := NewDisplayMath()
+	pc.Set(mathFenceContextKey, &mathFenceData{
+		char:   marker[0],
+		indent: indent,
+		length: len(marker),
+	})
+	reader.AdvanceToEOL()
+	return node, parser.NoChildren
+}
+
+func (b *mathFenceBlockParser) Continue(node gast.Node, reader text.Reader, pc parser.Context) parser.State {
+	line, segment := reader.PeekLine()
+	raw := pc.Get(mathFenceContextKey)
+	if raw == nil {
+		return parser.Close
+	}
+	data := raw.(*mathFenceData)
+
+	// Closing-fence detection mirrors goldmark's fencedCodeBlockParser:
+	// at most 3 columns of leading indent, a run of the opening fence
+	// character at least as long as the opening fence, and only blank
+	// content after it.
+	w, pos := util.IndentWidth(line, reader.LineOffset())
+	if w < 4 {
+		i := pos
+		for i < len(line) && line[i] == data.char {
+			i++
+		}
+		if i-pos >= data.length && util.IsBlank(line[i:]) {
+			reader.AdvanceToEOL()
+			return parser.Close
+		}
+	}
+
+	// Content line: store the same segment goldmark's fenced-code parser
+	// would store (indent relative to the opening fence stripped,
+	// container padding kept), so rendering is byte-identical.
+	pos, padding := util.IndentPositionPadding(line, reader.LineOffset(), segment.Padding, data.indent)
+	if pos < 0 {
+		pos = max(0, util.FirstNonSpacePosition(line)) - segment.Padding
+		padding = 0
+	}
+	seg := text.NewSegmentPadding(segment.Start+pos, segment.Stop, padding)
+	if padding != 0 {
+		preserveFenceLeadingTab(&seg, reader, data.indent)
+	}
+	seg.ForceNewline = true
+	node.Lines().Append(seg)
+	reader.AdvanceToEOL()
+	return parser.Continue | parser.NoChildren
+}
+
+// preserveFenceLeadingTab reproduces the tab-preservation quirk in
+// goldmark's fencedCodeBlockParser: when a content segment carries
+// container padding (blockquote/list marker) and the fence itself is
+// unindented, one leading position is folded back into the segment so
+// a tab right after the container marker survives as content.
+func preserveFenceLeadingTab(seg *text.Segment, reader text.Reader, indent int) {
+	offsetWithPadding := reader.LineOffset() + indent
+	sl, ss := reader.Position()
+	reader.SetPosition(sl, text.NewSegment(ss.Start-1, ss.Stop))
+	if offsetWithPadding == reader.LineOffset() {
+		seg.Padding = 0
+		seg.Start--
+	}
+	reader.SetPosition(sl, ss)
+}
+
+func (b *mathFenceBlockParser) Close(node gast.Node, reader text.Reader, pc parser.Context) {
+	pc.Set(mathFenceContextKey, nil)
+}
+
+func (b *mathFenceBlockParser) CanInterruptParagraph() bool {
+	return true
+}
+
+func (b *mathFenceBlockParser) CanAcceptIndentedLine() bool {
+	return false
+}
+
 // ── HTML renderer ────────────────────────────────────────
 
 type mathHTMLRenderer struct {
@@ -315,8 +446,6 @@ func NewMathHTMLRenderer(opts ...html.Option) renderer.NodeRenderer {
 func (r *mathHTMLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(KindInlineMath, r.renderInlineMath)
 	reg.Register(KindDisplayMath, r.renderDisplayMath)
-	// Also intercept fenced code blocks with language "math".
-	reg.Register(gast.KindFencedCodeBlock, r.renderFencedMath)
 }
 
 func (r *mathHTMLRenderer) renderInlineMath(w util.BufWriter, source []byte, node gast.Node, entering bool) (gast.WalkStatus, error) {
@@ -337,43 +466,6 @@ func (r *mathHTMLRenderer) renderDisplayMath(w util.BufWriter, source []byte, no
 	tex := extractBlockTeX(source, node)
 	fmt.Fprintf(w, `<div class="math math-display" data-tex="%s"></div>`+"\n", escapeHTMLAttr(tex))
 	return gast.WalkSkipChildren, nil
-}
-
-func (r *mathHTMLRenderer) renderFencedMath(w util.BufWriter, source []byte, node gast.Node, entering bool) (gast.WalkStatus, error) {
-	n := node.(*gast.FencedCodeBlock)
-	lang := n.Language(source)
-	if lang == nil || string(lang) != "math" {
-		// Not a math fence — delegate to the default renderer.
-		return r.renderDefaultFencedCode(w, source, n, entering)
-	}
-
-	if !entering {
-		return gast.WalkContinue, nil
-	}
-
-	tex := extractBlockTeX(source, n)
-	fmt.Fprintf(w, `<div class="math math-display" data-tex="%s"></div>`+"\n", escapeHTMLAttr(tex))
-	return gast.WalkContinue, nil
-}
-
-func (r *mathHTMLRenderer) renderDefaultFencedCode(w util.BufWriter, source []byte, n *gast.FencedCodeBlock, entering bool) (gast.WalkStatus, error) {
-	if entering {
-		_, _ = w.WriteString("<pre><code")
-		if lang := n.Language(source); lang != nil {
-			_, _ = w.WriteString(" class=\"language-")
-			r.Writer.Write(w, lang)
-			_, _ = w.WriteString("\"")
-		}
-		_ = w.WriteByte('>')
-		lines := n.Lines()
-		for i := 0; i < lines.Len(); i++ {
-			seg := lines.At(i)
-			r.Writer.RawWrite(w, seg.Value(source))
-		}
-	} else {
-		_, _ = w.WriteString("</code></pre>\n")
-	}
-	return gast.WalkContinue, nil
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -458,6 +550,7 @@ func (e *mathExtension) Extend(m goldmark.Markdown) {
 		),
 		parser.WithBlockParsers(
 			util.Prioritized(NewDisplayMathBlockParser(), 501),
+			util.Prioritized(NewMathFenceBlockParser(), 501),
 		),
 	)
 	m.Renderer().AddOptions(
