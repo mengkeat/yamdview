@@ -81,15 +81,93 @@
     reportErrors(errors);
   }
 
+  // ── Scroll preservation ────────────────────────────────
+
+  /**
+   * Build a text fingerprint for a block that stays stable across KaTeX
+   * rendering: math spans are collapsed back to their raw TeX source before
+   * the text is read, then whitespace is normalized.
+   */
+  function blockFingerprint(block) {
+    var clone = block.cloneNode(true);
+    var maths = clone.querySelectorAll(".math[data-tex]");
+    for (var i = 0; i < maths.length; i++) {
+      maths[i].textContent = maths[i].getAttribute("data-tex");
+    }
+    return (clone.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  /**
+   * Capture a visual anchor near the top of the viewport: the first block
+   * element intersecting the viewport, its offset from the viewport top, its
+   * id, and a text fingerprint used as an identity fallback.
+   */
+  function captureScrollAnchor() {
+    var blocks = document.querySelectorAll(".md-block");
+    for (var i = 0; i < blocks.length; i++) {
+      var rect = blocks[i].getBoundingClientRect();
+      if (rect.bottom > 0 && rect.top < window.innerHeight) {
+        return {
+          id: blocks[i].id || "",
+          offset: rect.top,
+          fingerprint: blockFingerprint(blocks[i]),
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Keep the anchored block visually stable after a batch of patch ops:
+   * locate it again by id (falling back to a fingerprint match among the
+   * remaining or newly inserted blocks) and scroll by whatever amount the
+   * patches shifted it. If the anchor block is gone and cannot be matched,
+   * leave the scroll position untouched rather than guessing.
+   */
+  function restoreScrollAnchor(anchor) {
+    if (!anchor) {
+      return;
+    }
+
+    var el = anchor.id ? document.getElementById(anchor.id) : null;
+    if (!el && anchor.fingerprint) {
+      var blocks = document.querySelectorAll(".md-block");
+      for (var i = 0; i < blocks.length; i++) {
+        if (blockFingerprint(blocks[i]) === anchor.fingerprint) {
+          el = blocks[i];
+          break;
+        }
+      }
+    }
+    if (!el) {
+      return;
+    }
+
+    // A reader still at the very top of the document stays there.
+    if ((window.pageYOffset || 0) === 0) {
+      return;
+    }
+
+    var delta = el.getBoundingClientRect().top - anchor.offset;
+    if (delta !== 0) {
+      window.scrollBy(0, delta);
+    }
+  }
+
   /**
    * Replace the inner HTML of the document element with a brief fade transition,
-   * then render any math in the new content.
+   * then render any math in the new content. The reader's scroll position is
+   * captured up front and restored once the new HTML is in place.
    */
   function replaceDocument(html) {
     var documentEl = getDocumentElement();
     if (!documentEl) {
       return;
     }
+
+    var scrollTop = window.pageYOffset ||
+      document.documentElement.scrollTop ||
+      document.body.scrollTop || 0;
 
     documentEl.style.opacity = "0";
     documentEl.style.transition = "opacity 120ms ease";
@@ -99,6 +177,7 @@
       requestAnimationFrame(function () {
         documentEl.innerHTML = html;
         documentEl.style.opacity = "1";
+        window.scrollTo(0, scrollTop);
         renderAndReport(documentEl);
       });
     });
@@ -166,11 +245,13 @@
     if (!Array.isArray(ops)) {
       return false;
     }
+    var anchor = captureScrollAnchor();
     for (var i = 0; i < ops.length; i++) {
       if (!applyPatchOp(ops[i])) {
         return false;
       }
     }
+    restoreScrollAnchor(anchor);
     return true;
   }
 
