@@ -14,6 +14,9 @@
   --paper-warm:   #f5f0e6;
   --paper-stain:  #ede4d3;
 
+  /* Update highlight (recently patched blocks) */
+  --update-glow:  rgba(199, 81, 59, 0.16);
+
   /* Ink tones */
   --ink:          #1e1b16;
   --ink-soft:     #4a4540;
@@ -69,6 +72,7 @@
     --accent:       #d4846b;
     --accent-soft:  #a06050;
     --accent-glow:  rgba(212, 132, 107, 0.12);
+    --update-glow:  rgba(212, 132, 107, 0.20);
     --code-paper:   #242018;
     --code-border:  #3a3428;
     --rule:         #3a3428;
@@ -118,6 +122,35 @@ main {
 
 .md-block {
   position: relative;
+}
+
+/* ── Update highlight ──────────────────────────────────── */
+
+/* Freshly inserted or replaced blocks get a soft accent tint that
+   fades out. The tint lives on a pseudo-element so block backgrounds
+   (code paper, blockquote glow) stay untouched. */
+.md-block--updated::before {
+  content: '';
+  position: absolute;
+  inset: -0.2em -0.4em;
+  border-radius: 8px;
+  background: var(--update-glow);
+  pointer-events: none;
+  animation: md-block-fade 1.8s ease-out forwards;
+}
+
+@keyframes md-block-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* Safety net: the script skips adding the class under reduced motion,
+   but never flash even if it somehow does. */
+@media (prefers-reduced-motion: reduce) {
+  .md-block--updated::before {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 /* ── Headings ──────────────────────────────────────────── */

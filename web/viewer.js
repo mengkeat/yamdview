@@ -81,6 +81,50 @@
     reportErrors(errors);
   }
 
+  // ── Update highlighting ────────────────────────────────
+
+  var UPDATE_CLASS = "md-block--updated";
+  var UPDATE_ANIMATION = "md-block-fade";
+  var UPDATE_TIMEOUT_MS = 2200;
+
+  /**
+   * Briefly highlight a freshly inserted or replaced block: the class
+   * drives a CSS fade-out animation and is removed on animationend,
+   * with a timeout fallback in case the event never fires. Skipped
+   * entirely when the user prefers reduced motion. The class sits on
+   * the wrapper section only; blockFingerprint reads textContent, so
+   * it is unaffected either way.
+   */
+  function markBlockUpdated(el) {
+    if (!el || typeof el.classList.add !== "function") {
+      return;
+    }
+    var reduced = window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      return;
+    }
+
+    el.classList.add(UPDATE_CLASS);
+
+    function remove() {
+      el.classList.remove(UPDATE_CLASS);
+      el.removeEventListener("animationend", onEnd);
+      clearTimeout(timer);
+    }
+
+    function onEnd(evt) {
+      // Ignore animations bubbling up from descendants.
+      if (evt.animationName !== UPDATE_ANIMATION) {
+        return;
+      }
+      remove();
+    }
+
+    var timer = setTimeout(remove, UPDATE_TIMEOUT_MS);
+    el.addEventListener("animationend", onEnd);
+  }
+
   // ── Scroll preservation ────────────────────────────────
 
   /**
@@ -204,6 +248,7 @@
       var replacement = elementFromHTML(op.html || "");
       if (!target || !replacement) return false;
       target.replaceWith(replacement);
+      markBlockUpdated(replacement);
       renderAndReport(replacement);
       return true;
     }
@@ -213,6 +258,7 @@
       var afterElement = elementFromHTML(op.html || "");
       if (!after || !afterElement) return false;
       after.after(afterElement);
+      markBlockUpdated(afterElement);
       renderAndReport(afterElement);
       return true;
     }
@@ -222,6 +268,7 @@
       var beforeElement = elementFromHTML(op.html || "");
       if (!before || !beforeElement) return false;
       before.before(beforeElement);
+      markBlockUpdated(beforeElement);
       renderAndReport(beforeElement);
       return true;
     }
