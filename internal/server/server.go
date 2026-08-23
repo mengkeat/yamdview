@@ -163,7 +163,11 @@ func WithKatexFS(fsys fs.FS) Option {
 
 // SessionTokenHeader is the documented header required when submitting a
 // review. Its value is the token belonging to the attached session.
-const SessionTokenHeader = "X-Yamdview-Token"
+const (
+	SessionTokenHeader = "X-Yamdview-Token"
+	maxClientErrorBody = 1 << 20
+	maxClientErrors    = 100
+)
 
 // WithSession attaches a review session to the served page and session API.
 // Without this option the server remains an ordinary viewer.
@@ -563,8 +567,18 @@ func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var errs []ClientError
-	if err := json.NewDecoder(r.Body).Decode(&errs); err != nil {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxClientErrorBody))
+	if err := decoder.Decode(&errs); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(errs) > maxClientErrors {
+		http.Error(w, "too many client errors", http.StatusBadRequest)
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "request body must contain one JSON array", http.StatusBadRequest)
 		return
 	}
 

@@ -92,6 +92,13 @@ func TestParseConfigRejectsBadJSON(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsTrailingValue(t *testing.T) {
+	doc := `{"providers":{}} {}`
+	if _, err := ParseConfig([]byte(doc)); err == nil {
+		t.Fatal("expected error for trailing JSON value")
+	}
+}
+
 func TestParseConfigFile(t *testing.T) {
 	doc := `{"providers":{"x":{"type":"openai-compatible","model":"m","base_url":"http://x/v1"}}}`
 	cfg, err := ParseConfigFile("cfg.json", func(string) ([]byte, error) { return []byte(doc), nil })

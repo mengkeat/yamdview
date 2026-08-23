@@ -40,6 +40,17 @@ func TestApplyMultiplePatches(t *testing.T) {
 	}
 }
 
+func TestApplySkipsInvalidOffsets(t *testing.T) {
+	src := []byte("hello")
+	out := Apply(src, []SourcePatch{
+		{StartByte: -1, EndByte: 1, NewText: "bad"},
+		{StartByte: 2, EndByte: 99, NewText: "bad"},
+	})
+	if string(out) != string(src) {
+		t.Fatalf("invalid patches changed source: %q", out)
+	}
+}
+
 func TestApplyInsertion(t *testing.T) {
 	src := []byte("hello world")
 	patches := []SourcePatch{

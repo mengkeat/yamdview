@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -104,6 +105,13 @@ func ParseConfig(data []byte) (Config, error) {
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse llm config: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Config{}, fmt.Errorf("parse llm config: trailing value")
+		}
+		return Config{}, fmt.Errorf("parse llm config: trailing data: %w", err)
 	}
 	return cfg, nil
 }

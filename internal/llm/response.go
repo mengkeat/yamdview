@@ -49,8 +49,11 @@ func DecodeRepairResponse(raw []byte) (RepairResponse, error) {
 	}
 	// Exactly one JSON object: a second decode must hit EOF.
 	var trailing struct{}
-	if err := dec.Decode(&trailing); err != nil && !errors.Is(err, io.EOF) {
-		return RepairResponse{}, fmt.Errorf("%w: trailing data after JSON object", ErrInvalidResponse)
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return RepairResponse{}, fmt.Errorf("%w: trailing data after JSON object", ErrInvalidResponse)
+		}
+		return RepairResponse{}, fmt.Errorf("%w: invalid trailing data after JSON object: %s", ErrInvalidResponse, normalizeJSONErr(err))
 	}
 	if strings.TrimSpace(resp.ReplacementMarkdown) == "" {
 		return RepairResponse{}, fmt.Errorf("%w: replacement_markdown is empty", ErrInvalidResponse)

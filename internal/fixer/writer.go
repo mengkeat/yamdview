@@ -22,6 +22,9 @@ func Apply(src []byte, patches []SourcePatch) []byte {
 	var out bytes.Buffer
 	cursor := 0
 	for _, p := range sorted {
+		if p.StartByte < 0 || p.EndByte < p.StartByte || p.EndByte > len(src) {
+			continue
+		}
 		if p.StartByte < cursor {
 			// Skip overlapping patches to preserve well-formedness.
 			continue
@@ -113,30 +116,46 @@ func writeBackup(path, backupDir string, contents []byte, now time.Time, perm os
 	if dir == "" {
 		dir = filepath.Dir(path)
 	}
-	stamp := now.UTC().Format("20060102-150405")
-	base := filepath.Base(path)
-	backupPath := filepath.Join(dir, base+".bak-"+stamp)
-	if _, err := os.Stat(backupPath); err == nil {
-		// Add a counter suffix when the timestamp collides (rapid re-saves).
-		for i := 2; ; i++ {
-			candidate := filepath.Join(dir, fmt.Sprintf("%s.bak-%s-%d", base, stamp, i))
-			if _, err := os.Stat(candidate); os.IsNotExist(err) {
-				backupPath = candidate
-				break
-			} else if err != nil {
-				return "", err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if err := writeFileAtomic(backupPath, contents, perm); err != nil {
+	stamp := now.UTC().Format("20060102-150405")
+	base := filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, base+".yamdview.bak-")
+	if err != nil {
 		return "", err
 	}
-	return backupPath, nil
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(contents); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return "", err
+	}
+
+	// Link creates the final name without replacing an existing backup. The
+	// temporary file is in the same directory, so the operation is atomic.
+	for i := 1; ; i++ {
+		suffix := ""
+		if i > 1 {
+			suffix = fmt.Sprintf("-%d", i)
+		}
+		backupPath := filepath.Join(dir, fmt.Sprintf("%s.bak-%s%s", base, stamp, suffix))
+		if err := os.Link(tmpName, backupPath); err == nil {
+			return backupPath, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+	}
 }
 
 // atomicWrite writes contents to a temp file in the same directory as path
@@ -175,11 +194,4 @@ func atomicWrite(path string, contents []byte, perm os.FileMode) error {
 		return err
 	}
 	return nil
-}
-
-// writeFileAtomic writes backup files atomically so a partially-written
-// backup never overwrites an existing one. It shares the implementation
-// with the main atomic writer.
-func writeFileAtomic(path string, contents []byte, perm os.FileMode) error {
-	return atomicWrite(path, contents, perm)
 }

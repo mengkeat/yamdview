@@ -48,6 +48,13 @@ func TestDecodeRepairResponseTrailingDataRejected(t *testing.T) {
 	}
 }
 
+func TestDecodeRepairResponseTrailingValueRejected(t *testing.T) {
+	raw := []byte(`{"replacement_markdown":"x","confidence":0.5}{}`)
+	if _, err := DecodeRepairResponse(raw); !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("expected ErrInvalidResponse for trailing value, got %v", err)
+	}
+}
+
 func TestDecodeRepairResponseMalformedJSONRejected(t *testing.T) {
 	raw := []byte(`{"replacement_markdown":"x", confidence: 0.5}`)
 	if _, err := DecodeRepairResponse(raw); !errors.Is(err, ErrInvalidResponse) {
