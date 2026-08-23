@@ -518,7 +518,7 @@ func stripInlineDelimiters(data []byte) []byte {
 	return []byte(s)
 }
 
-func stripBlockDelimiters(line []byte, lineIdx int, totalLines int) []byte {
+func stripBlockDelimiters(line []byte, lineIdx, totalLines int) []byte {
 	s := string(line)
 	if lineIdx == 0 {
 		s = strings.TrimPrefix(s, "$$")

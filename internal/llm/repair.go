@@ -90,7 +90,7 @@ func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []
 	if err != nil {
 		// Provider failures are normal repair outcomes, not caller errors.
 		cand.Diagnostics = []Diagnostic{classifyProviderErr(err)}
-		return cand, nil
+		return normalCandidate(cand)
 	}
 	cand.ResponseHash = hashShort(resp.Text)
 	cand.Model = resp.Model
@@ -112,7 +112,7 @@ func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []
 			Code:     CodeRejected,
 			Message:  "invalid llm response: " + err.Error(),
 		}}
-		return cand, nil
+		return normalCandidate(cand)
 	}
 
 	failures := ValidateResponse(decoded, ValidationOptions{
@@ -139,6 +139,11 @@ func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []
 	return cand, nil
 }
 
+func normalCandidate(cand LLMCandidate) (LLMCandidate, error) {
+	return cand, nil
+}
+
+// classifyProviderErr maps a provider error to a diagnostic with the right
 // classifyProviderErr maps a provider error to a diagnostic with the right
 // stable code: timeouts, cancellation (treated as stale), and other failures.
 func classifyProviderErr(err error) Diagnostic {
