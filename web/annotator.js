@@ -149,7 +149,7 @@
     if (!panel) return;
     var token = panel.getAttribute("data-session-token") || "";
     var terminal = panel.getAttribute("data-session-state") !== "open";
-    var annotations = [], draft = null, saveTimer = null, saving = false, saveAgain = false;
+    var annotations = [], draft = null, saveTimer = null, saving = false, saveAgain = false, documentReloadTimer = null;
     var add = document.createElement("button");
     add.type = "button";
     add.className = "review-annotator-add";
@@ -202,7 +202,13 @@
         draft.items[i].comment = draft.comment;
         draft.items[i].suggested_replacement = draft.replacement || "";
         var found = false;
-        for (var j = 0; j < annotations.length; j++) if (annotations[j].id === draft.items[i].id) { annotations[j] = draft.items[i]; found = true; break; }
+        for (var j = 0; j < annotations.length; j++) if (annotations[j].id === draft.items[i].id) {
+          annotations[j].kind = draft.items[i].kind;
+          annotations[j].comment = draft.items[i].comment;
+          annotations[j].suggested_replacement = draft.items[i].suggested_replacement;
+          found = true;
+          break;
+        }
         if (!found && draft.items[i].id) annotations.push(draft.items[i]);
       }
     }
@@ -360,12 +366,32 @@
     }
     function removeFallback() { var old = document.querySelectorAll(".review-annotator-fallback-mark"); for (var i = 0; i < old.length; i++) old[i].remove(); }
     function refresh() { renderHighlights(); }
+    function preserveDraftEdits(items) {
+      if (!draft) return items;
+      draft.kind = kind.value; draft.comment = comment.value; draft.replacement = replacement.value;
+      for (var i = 0; i < items.length; i++) {
+        for (var j = 0; j < draft.items.length; j++) if (draft.items[j].id === items[i].id) {
+          items[i].kind = draft.kind;
+          items[i].comment = draft.comment;
+          items[i].suggested_replacement = draft.replacement || "";
+          break;
+        }
+      }
+      return items;
+    }
     function reloadAnnotations() {
       return api("/api/session", "GET", "").then(function (metadata) {
         if (metadata.state && metadata.state !== "open") setTerminal("This review is closed; annotations are read-only.");
-        annotations = Array.isArray(metadata.annotations) ? metadata.annotations : [];
+        annotations = preserveDraftEdits(Array.isArray(metadata.annotations) ? metadata.annotations : []);
         renderList(); renderHighlights();
       }).catch(function (err) { setStatus(err.message || "Could not load annotations.", "error"); renderList(); });
+    }
+    function scheduleDocumentReload() {
+      if (documentReloadTimer) clearTimeout(documentReloadTimer);
+      documentReloadTimer = setTimeout(function () {
+        documentReloadTimer = null;
+        reloadAnnotations();
+      }, 200);
     }
 
     document.addEventListener("mouseup", function () {
@@ -391,8 +417,14 @@
 
     if (window.MutationObserver) {
       var observer = new MutationObserver(function (mutations) {
-        for (var i = 0; i < mutations.length; i++) if (mutations[i].target === panel && panel.getAttribute("data-session-state") !== "open") setTerminal("This review is closed; annotations are read-only.");
+        var documentChanged = false;
+        for (var i = 0; i < mutations.length; i++) {
+          if (mutations[i].target === panel) {
+            if (panel.getAttribute("data-session-state") !== "open") setTerminal("This review is closed; annotations are read-only.");
+          } else documentChanged = true;
+        }
         setTimeout(refresh, 0);
+        if (documentChanged) scheduleDocumentReload();
       });
       var documentEl = document.getElementById("document"); if (documentEl) observer.observe(documentEl, { childList: true, subtree: true });
       observer.observe(panel, { attributes: true, attributeFilter: ["data-session-state"] });

@@ -35,6 +35,9 @@ func TestReviewAnnotatorHardensSelectionAndDraftLifecycle(t *testing.T) {
 		"if (draft !== current || current.cancelled)",
 		"function reloadAnnotations()",
 		"event.persisted",
+		"function scheduleDocumentReload()",
+		"documentReloadTimer = setTimeout(function () {\n        documentReloadTimer = null;\n        reloadAnnotations();",
+		"if (documentChanged) scheduleDocumentReload();",
 	}
 	for _, want := range checks {
 		if !strings.Contains(assets.AnnotatorJS, want) {
