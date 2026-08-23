@@ -27,32 +27,38 @@
     return (value || "").replace(/\s+/g, " ").replace(/^\s+|\s+$/g, "");
   }
 
-  function quoteRanges(block, quote) {
+  function quoteRanges(block, quote, prefix, suffix) {
     var nodes = textNodes(block), full = "", offsets = [], i;
     for (i = 0; i < nodes.length; i++) {
       offsets.push(full.length);
       full += nodes[i].nodeValue;
     }
-    var at = full.indexOf(quote);
+    var at = full.indexOf(quote), fallback = at;
+    while (at >= 0 && (prefix || suffix)) {
+      var before = prefix ? full.slice(Math.max(0, at - prefix.length), at) : "";
+      var after = suffix ? full.slice(at + quote.length, at + quote.length + suffix.length) : "";
+      if ((!prefix || before === prefix) && (!suffix || after === suffix)) break;
+      at = full.indexOf(quote, at + 1);
+    }
+    if (at < 0) at = fallback;
     if (at < 0) {
-      var wanted = normalise(quote), compact = normalise(full);
-      at = compact.indexOf(wanted);
-      if (at < 0 || !wanted) return [];
-      // A normalized match is useful for rendered Markdown, but map it through
-      // the original text conservatively rather than guessing across nodes.
-      var compactStart = 0, rawStart = -1, rawEnd = -1, inMatch = false;
+      var wanted = normalise(quote), compact = "", map = [], raw, compactAt, rawStart, rawEnd;
       for (i = 0; i < full.length; i++) {
-        if (!/\s/.test(full.charAt(i))) {
-          if (compactStart === at) rawStart = i;
-          compactStart++;
-          if (compactStart === at + wanted.length) { rawEnd = i + 1; break; }
-        } else if (compactStart > at && compactStart < at + wanted.length) {
-          rawEnd = i + 1;
+        raw = full.charAt(i);
+        if (/\s/.test(raw)) {
+          if (!compact || compact.charAt(compact.length - 1) === " ") continue;
+          raw = " ";
         }
+        compact += raw;
+        map.push(i);
       }
-      at = rawStart;
-      if (at < 0 || rawEnd < 0) return [];
-      return makeRanges(nodes, offsets, at, rawEnd);
+      while (compact.charAt(0) === " ") { compact = compact.slice(1); map.shift(); }
+      while (compact.charAt(compact.length - 1) === " ") { compact = compact.slice(0, -1); map.pop(); }
+      compactAt = compact.indexOf(wanted);
+      if (compactAt < 0 || !wanted) return [];
+      rawStart = map[compactAt];
+      rawEnd = map[compactAt + wanted.length - 1] + 1;
+      return makeRanges(nodes, offsets, rawStart, rawEnd);
     }
     return makeRanges(nodes, offsets, at, at + quote.length);
   }
@@ -75,6 +81,13 @@
     return isNaN(value) ? 0 : value;
   }
 
+  function textOffset(block, container, offset) {
+    var before = document.createRange();
+    before.selectNodeContents(block);
+    before.setEnd(container, offset);
+    return before.toString().length;
+  }
+
   function selectionPieces(selectionRange) {
     var blocks = document.querySelectorAll(".md-block"), pieces = [], i;
     for (i = 0; i < blocks.length; i++) {
@@ -89,9 +102,16 @@
       if (selectionRange.compareBoundaryPoints(Range.END_TO_END, blockRange) < 0) {
         part.setEnd(selectionRange.endContainer, selectionRange.endOffset);
       } else part.setEnd(blockRange.endContainer, blockRange.endOffset);
-      var quote = part.toString().replace(/^\s+|\s+$/g, "");
+      var rawQuote = part.toString(), leading = rawQuote.search(/\S|$/);
+      var quote = rawQuote.replace(/^\s+|\s+$/g, "");
       if (!quote) continue;
       var visible = block.textContent || "", quoteAt = visible.indexOf(quote);
+      var selectedAt = textOffset(block, part.startContainer, part.startOffset) + leading;
+      if (visible.slice(selectedAt, selectedAt + quote.length) === quote) quoteAt = selectedAt;
+      else {
+        var fromSelection = visible.indexOf(quote, selectedAt);
+        if (fromSelection >= 0) quoteAt = fromSelection;
+      }
       var prefix = quoteAt > 0 ? visible.slice(Math.max(0, quoteAt - 64), quoteAt) : "";
       var after = quoteAt >= 0 ? quoteAt + quote.length : visible.length;
       var suffix = visible.slice(after, after + 64);
@@ -210,7 +230,7 @@
         var quote = document.createElement("q"); quote.className = "review-annotator-item__quote"; quote.textContent = item.quote || "Selected text"; row.appendChild(quote);
         var note = document.createElement("p"); note.className = "review-annotator-item__comment"; note.textContent = item.comment || (item.suggested_replacement ? "→ " + item.suggested_replacement : "Draft note"); row.appendChild(note);
         var actions = document.createElement("div"); actions.className = "review-annotator-item__actions";
-        var jump = actionButton("Jump", function () { var target = document.getElementById(item.block_id); if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); target.focus({ preventScroll: true }); } });
+        var jump = actionButton("Jump", (function (blockID) { return function () { var target = document.getElementById(blockID); if (target) { target.scrollIntoView({ behavior: "smooth", block: "center" }); target.focus({ preventScroll: true }); } }; })(item.block_id));
         var edit = actionButton("Edit", (function (g) { return function () { openEditor(g); }; })(group));
         var remove = actionButton("Delete", (function (g) { return function () { deleteGroup(g); }; })(group));
         actions.appendChild(jump); actions.appendChild(edit); actions.appendChild(remove); row.appendChild(actions); list.appendChild(row);
@@ -225,10 +245,15 @@
       if (top + composer.offsetHeight > window.innerHeight - 8) top = Math.max(8, rect.top - composer.offsetHeight - 10);
       composer.style.left = left + "px"; composer.style.top = top + "px";
     }
+    function copyItem(item) { var copy = {}; for (var key in item) if (Object.prototype.hasOwnProperty.call(item, key)) copy[key] = item[key]; return copy; }
+
+    function deleteItems(items) {
+      for (var i = 0; i < items.length; i++) if (items[i].id) api("/api/session/annotations/" + encodeURIComponent(items[i].id), "DELETE", token).catch(function () {});
+    }
     function openEditor(group) {
       hideAdd();
       var item = group.items[0];
-      draft = { items: group.items.slice(0), pieces: group.items.map(function (a) { return { block_id: a.block_id, start_line: a.start_line || 0, end_line: a.end_line || 0, quote: a.quote, prefix: a.prefix || "", suffix: a.suffix || "" }; }), kind: item.kind || "comment", comment: item.comment || "", replacement: item.suggested_replacement || "", isNew: false };
+      draft = { items: group.items.map(copyItem), pieces: group.items.map(function (a) { return { block_id: a.block_id, start_line: a.start_line || 0, end_line: a.end_line || 0, quote: a.quote, prefix: a.prefix || "", suffix: a.suffix || "" }; }), kind: item.kind || "comment", comment: item.comment || "", replacement: item.suggested_replacement || "", isNew: false };
       kind.value = draft.kind; comment.value = draft.comment; replacement.value = draft.replacement; updateReplacement();
       composer.querySelector(".review-annotator-composer__title").textContent = "Edit annotation";
       composer.setAttribute("data-visible", "true"); composer.setAttribute("aria-hidden", "false"); setStatus("Saved", "saved");
@@ -245,25 +270,29 @@
       queueSave();
     }
     function closeComposer(removeDraft) {
-      if (removeDraft && draft && draft.isNew) {
-        var old = draft.items.slice(0);
-        for (var i = 0; i < old.length; i++) if (old[i].id) api("/api/session/annotations/" + encodeURIComponent(old[i].id), "DELETE", token).catch(function () {});
-        annotations = annotations.filter(function (a) { return !old.some(function (o) { return o.id === a.id; }); });
+      var closing = draft;
+      if (removeDraft && closing) {
+        closing.cancelled = true;
+        if (closing.isNew) {
+          var old = closing.items.slice(0);
+          deleteItems(old);
+          annotations = annotations.filter(function (a) { return !old.some(function (o) { return o.id === a.id; }); });
+        }
       }
       draft = null; composer.setAttribute("data-visible", "false"); composer.setAttribute("aria-hidden", "true"); setStatus("", ""); renderList(); renderHighlights();
     }
-    function payloadForCreate() {
-      var payload = { kind: draft.kind, comment: draft.comment };
-      if (draft.kind === "suggestion") payload.suggested_replacement = draft.replacement;
-      if (draft.pieces.length > 1) payload.pieces = draft.pieces;
+    function payloadForCreate(current) {
+      var payload = { kind: current.kind, comment: current.comment };
+      if (current.kind === "suggestion") payload.suggested_replacement = current.replacement;
+      if (current.pieces.length > 1) payload.pieces = current.pieces;
       else {
-        var p = draft.pieces[0]; payload.block_id = p.block_id; payload.start_line = p.start_line; payload.end_line = p.end_line; payload.quote = p.quote; payload.prefix = p.prefix; payload.suffix = p.suffix;
+        var p = current.pieces[0]; payload.block_id = p.block_id; payload.start_line = p.start_line; payload.end_line = p.end_line; payload.quote = p.quote; payload.prefix = p.prefix; payload.suffix = p.suffix;
       }
       return payload;
     }
-    function patchPayload() {
-      var payload = { kind: draft.kind, comment: draft.comment };
-      if (draft.kind === "suggestion") payload.suggested_replacement = draft.replacement;
+    function patchPayload(current) {
+      var payload = { kind: current.kind, comment: current.comment };
+      if (current.kind === "suggestion") payload.suggested_replacement = current.replacement;
       else payload.suggested_replacement = "";
       return payload;
     }
@@ -273,16 +302,27 @@
     }
     function saveDraft() {
       saveTimer = null;
-      if (!draft || terminal) return;
-      draft.kind = kind.value; draft.comment = comment.value; draft.replacement = replacement.value;
+      var current = draft;
+      if (!current || terminal) return;
+      current.kind = kind.value; current.comment = comment.value; current.replacement = replacement.value;
+      if (current.kind === "suggestion" && !current.replacement.replace(/^\s+|\s+$/g, "")) { setStatus("A suggested replacement is required.", "error"); return; }
       syncDraft(); renderList();
-      if (draft.kind === "suggestion" && !draft.replacement.replace(/^\s+|\s+$/g, "")) { setStatus("A suggested replacement is required.", "error"); return; }
       if (saving) { saveAgain = true; return; }
       saving = true; setStatus("Saving…", "");
       var request;
-      if (!draft.items.length) request = api("/api/session/annotations", "POST", token, payloadForCreate()).then(function (created) { draft.items = Array.isArray(created) ? created : [created]; draft.isNew = false; syncDraft(); });
-      else request = Promise.all(draft.items.map(function (item) { return api("/api/session/annotations/" + encodeURIComponent(item.id), "PATCH", token, patchPayload()); })).then(function (updated) { draft.items = updated; syncDraft(); });
-      request.then(function () { setStatus("Saved", "saved"); renderList(); renderHighlights(); }).catch(function (err) { if (err.message.indexOf("no longer open") >= 0 || err.message.indexOf("session") >= 0) setTerminal(err.message); else setStatus(err.message || "Could not save annotation.", "error"); }).then(function () { saving = false; if (saveAgain) { saveAgain = false; queueSave(); } });
+      if (!current.items.length) request = api("/api/session/annotations", "POST", token, payloadForCreate(current)).then(function (created) {
+        var items = Array.isArray(created) ? created : [created];
+        if (draft !== current || current.cancelled) { if (current.isNew) deleteItems(items); return; }
+        current.items = items; syncDraft();
+      });
+      else request = Promise.all(current.items.map(function (item) { return api("/api/session/annotations/" + encodeURIComponent(item.id), "PATCH", token, patchPayload(current)); })).then(function (updated) {
+        if (draft !== current || current.cancelled) return;
+        current.items = updated; syncDraft();
+      });
+      request.then(function () { if (draft !== current) return; setStatus("Saved", "saved"); renderList(); renderHighlights(); }).catch(function (err) {
+        if (draft !== current) return;
+        if (err.message.indexOf("no longer open") >= 0 || err.message.indexOf("session") >= 0) setTerminal(err.message); else setStatus(err.message || "Could not save annotation.", "error");
+      }).then(function () { saving = false; if (saveAgain) { saveAgain = false; queueSave(); } });
     }
     function deleteGroup(group) {
       if (terminal || !window.confirm("Delete this annotation?")) return;
@@ -297,7 +337,7 @@
         if (annotations[i].status === "outdated") continue;
         var block = document.getElementById(annotations[i].block_id);
         if (!block) continue;
-        var found = quoteRanges(block, annotations[i].quote || "");
+        var found = quoteRanges(block, annotations[i].quote || "", annotations[i].prefix || "", annotations[i].suffix || "");
         for (j = 0; j < found.length; j++) ranges.push(found[j]);
       }
       if (window.CSS && CSS.highlights && window.Highlight) {
@@ -320,6 +360,13 @@
     }
     function removeFallback() { var old = document.querySelectorAll(".review-annotator-fallback-mark"); for (var i = 0; i < old.length; i++) old[i].remove(); }
     function refresh() { renderHighlights(); }
+    function reloadAnnotations() {
+      return api("/api/session", "GET", "").then(function (metadata) {
+        if (metadata.state && metadata.state !== "open") setTerminal("This review is closed; annotations are read-only.");
+        annotations = Array.isArray(metadata.annotations) ? metadata.annotations : [];
+        renderList(); renderHighlights();
+      }).catch(function (err) { setStatus(err.message || "Could not load annotations.", "error"); renderList(); });
+    }
 
     document.addEventListener("mouseup", function () {
       if (terminal || composer.getAttribute("data-visible") === "true") return;
@@ -335,17 +382,18 @@
     add.addEventListener("click", function () { if (add._pieces) openNew(add._pieces, add._rect); });
     kind.addEventListener("change", function () { updateReplacement(); queueSave(); });
     comment.addEventListener("input", queueSave); replacement.addEventListener("input", queueSave);
-    composer.querySelector('[data-action="done"]').addEventListener("click", function () { if (saveTimer) { clearTimeout(saveTimer); saveDraft(); } setStatus("Saved", "saved"); });
+    composer.querySelector('[data-action="done"]').addEventListener("click", function () { if (saveTimer) { clearTimeout(saveTimer); saveDraft(); } else if (draft) setStatus("Saved", "saved"); });
     composer.querySelector('[data-action="cancel"]').addEventListener("click", function () { closeComposer(true); });
     window.addEventListener("resize", refresh); window.addEventListener("scroll", refresh, true);
 
-    api("/api/session", "GET", "").then(function (metadata) {
-      if (metadata.state && metadata.state !== "open") setTerminal("This review is closed; annotations are read-only.");
-      annotations = metadata.annotations || []; renderList(); renderHighlights();
-    }).catch(function (err) { setStatus(err.message || "Could not load annotations.", "error"); renderList(); });
+    reloadAnnotations();
+    window.addEventListener("pageshow", function (event) { if (event.persisted) reloadAnnotations(); });
 
     if (window.MutationObserver) {
-      var observer = new MutationObserver(function () { setTimeout(refresh, 0); });
+      var observer = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) if (mutations[i].target === panel && panel.getAttribute("data-session-state") !== "open") setTerminal("This review is closed; annotations are read-only.");
+        setTimeout(refresh, 0);
+      });
       var documentEl = document.getElementById("document"); if (documentEl) observer.observe(documentEl, { childList: true, subtree: true });
       observer.observe(panel, { attributes: true, attributeFilter: ["data-session-state"] });
     }
