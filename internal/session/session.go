@@ -4,6 +4,7 @@ package session
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -36,6 +37,21 @@ var ErrInvalidTransition = errors.New("invalid session transition")
 
 const tokenBytes = 32
 
+// Metadata is the safe, mutable state of a review session. It intentionally
+// excludes the session token and frozen document contents.
+type Metadata struct {
+	ID          string
+	Title       string
+	Prompt      string
+	Choices     []string
+	State       State
+	Verdict     string
+	Summary     string
+	Revision    int
+	OpenedAt    time.Time
+	SubmittedAt time.Time
+}
+
 // Session is one frozen document review and its lifecycle state.
 //
 // Source, Choices, and Snapshot are copied when the session is created, so
@@ -61,6 +77,34 @@ type Session struct {
 
 	mu   sync.RWMutex
 	done chan struct{}
+}
+
+// Metadata returns a concurrency-safe copy of the session state suitable for
+// displaying or serialising to a client. It never includes the session token.
+func (s *Session) Metadata() Metadata {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return Metadata{
+		ID:          s.ID,
+		Title:       s.Title,
+		Prompt:      s.Prompt,
+		Choices:     append([]string(nil), s.Choices...),
+		State:       s.State,
+		Verdict:     s.Verdict,
+		Summary:     s.Summary,
+		Revision:    s.Revision,
+		OpenedAt:    s.OpenedAt,
+		SubmittedAt: s.SubmittedAt,
+	}
+}
+
+// TokenMatches reports whether token is this session's token. Comparison is
+// constant-time so callers can safely use it for HTTP authentication.
+func (s *Session) TokenMatches(token string) bool {
+	s.mu.RLock()
+	expected := s.Token
+	s.mu.RUnlock()
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(token)) == 1
 }
 
 // New creates an open review session with a cryptographically random token.

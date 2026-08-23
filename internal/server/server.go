@@ -7,14 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/session"
 )
 
 // ExportView is a named viewport target for standalone export.
@@ -63,6 +66,18 @@ type PageData struct {
 	Content template.HTML
 	CSS     template.CSS
 	JS      template.JS
+	Review  *ReviewPageData
+}
+
+// ReviewPageData is the small amount of review state rendered into a review
+// page. Token is intentionally page-only; API responses use session metadata.
+type ReviewPageData struct {
+	ID      string
+	Title   string
+	Prompt  string
+	Choices []string
+	State   string
+	Token   string
 }
 
 // Assets provides the embedded web assets (template, CSS, JS).
@@ -105,6 +120,7 @@ type Server struct {
 	pageData PageData
 	tmpl     *template.Template
 	katexFS  fs.FS
+	review   *session.Session
 
 	clientsMu sync.Mutex
 	clients   map[chan sseEvent]struct{}
@@ -137,6 +153,16 @@ type Option func(*Server)
 // given filesystem (rooted at the katex distribution directory).
 func WithKatexFS(fsys fs.FS) Option {
 	return func(s *Server) { s.katexFS = fsys }
+}
+
+// SessionTokenHeader is the documented header required when submitting a
+// review. Its value is the token belonging to the attached session.
+const SessionTokenHeader = "X-Yamdview-Token"
+
+// WithSession attaches a review session to the served page and session API.
+// Without this option the server remains an ordinary viewer.
+func WithSession(review *session.Session) Option {
+	return func(s *Server) { s.review = review }
 }
 
 // WithClientErrorHandler registers a callback for client-side render errors
@@ -185,7 +211,7 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		data := s.currentPageData()
+		data := s.pageDataForViewer()
 		if err := tmpl.Execute(w, data); err != nil {
 			http.Error(w, "template error", http.StatusInternalServerError)
 		}
@@ -202,6 +228,10 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 		katexHandler := http.FileServer(http.FS(s.katexFS))
 		mux.Handle("/katex/", http.StripPrefix("/katex/", katexHandler))
 	}
+
+	// Review session metadata and token-gated submission endpoints.
+	mux.HandleFunc("/api/session", s.handleSessionMetadata)
+	mux.HandleFunc("/api/session/submit", s.handleSessionSubmit)
 
 	// Client error reporting endpoint.
 	mux.HandleFunc("/client-error", s.handleClientError)
@@ -288,6 +318,29 @@ func (s *Server) currentPageData() PageData {
 	return s.pageData
 }
 
+func (s *Server) pageDataForViewer() PageData {
+	data := s.currentPageData()
+	if s.review != nil {
+		metadata := s.review.Metadata()
+		data.Review = &ReviewPageData{
+			ID:      metadata.ID,
+			Title:   metadata.Title,
+			Prompt:  metadata.Prompt,
+			Choices: metadata.Choices,
+			State:   string(metadata.State),
+			Token:   s.reviewToken(),
+		}
+	}
+	return data
+}
+
+func (s *Server) reviewToken() string {
+	if s.review == nil {
+		return ""
+	}
+	return s.review.Token
+}
+
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -347,6 +400,112 @@ func writeSSE(w http.ResponseWriter, event sseEvent) {
 		fmt.Fprintf(w, "data: %s\n", line)
 	}
 	fmt.Fprint(w, "\n")
+}
+
+type sessionMetadataResponse struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Prompt      string    `json:"prompt"`
+	Choices     []string  `json:"choices"`
+	State       string    `json:"state"`
+	Verdict     string    `json:"verdict"`
+	Summary     string    `json:"summary"`
+	Revision    int       `json:"revision"`
+	OpenedAt    time.Time `json:"opened_at"`
+	SubmittedAt time.Time `json:"submitted_at,omitempty"`
+}
+
+// handleSessionMetadata returns session metadata without the authentication
+// token. The endpoint is intentionally read-only.
+func (s *Server) handleSessionMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.review == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	metadata := s.review.Metadata()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(sessionMetadataResponse{
+		ID:          metadata.ID,
+		Title:       metadata.Title,
+		Prompt:      metadata.Prompt,
+		Choices:     metadata.Choices,
+		State:       string(metadata.State),
+		Verdict:     metadata.Verdict,
+		Summary:     metadata.Summary,
+		Revision:    metadata.Revision,
+		OpenedAt:    metadata.OpenedAt,
+		SubmittedAt: metadata.SubmittedAt,
+	})
+}
+
+type sessionSubmitRequest struct {
+	Verdict *string `json:"verdict"`
+	Summary *string `json:"summary"`
+}
+
+// handleSessionSubmit accepts one token-authenticated review submission. The
+// X-Yamdview-Token header is required and is never accepted in the JSON body.
+func (s *Server) handleSessionSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.review == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.review.TokenMatches(r.Header.Get(SessionTokenHeader)) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	var req sessionSubmitRequest
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		http.Error(w, "request body must contain one JSON object", http.StatusBadRequest)
+		return
+	}
+	if req.Verdict == nil || strings.TrimSpace(*req.Verdict) == "" || req.Summary == nil {
+		http.Error(w, "verdict and summary are required", http.StatusBadRequest)
+		return
+	}
+
+	metadata := s.review.Metadata()
+	if len(metadata.Choices) > 0 && !containsChoice(metadata.Choices, *req.Verdict) {
+		http.Error(w, "verdict is not one of the session choices", http.StatusBadRequest)
+		return
+	}
+	if err := s.review.Submit(*req.Verdict, *req.Summary); err != nil {
+		if errors.Is(err, session.ErrInvalidTransition) {
+			http.Error(w, "session is no longer open", http.StatusConflict)
+			return
+		}
+		http.Error(w, "could not submit session", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]string{"state": string(session.Submitted)})
+}
+
+func containsChoice(choices []string, verdict string) bool {
+	for _, choice := range choices {
+		if choice == verdict {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {

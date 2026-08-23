@@ -13,6 +13,24 @@
 </style>
 </head>
 <body>
+{{if .Review}}
+<aside id="review-session" class="review-session" data-session-id="{{.Review.ID}}" data-session-state="{{.Review.State}}" data-session-token="{{.Review.Token}}">
+<p class="review-session__eyebrow">Review session</p>
+<h1>{{.Review.Title}}</h1>
+{{if .Review.Prompt}}<p class="review-session__prompt">{{.Review.Prompt}}</p>{{end}}
+<div class="review-session__controls">
+<div class="review-session__choices" role="group" aria-label="Choose a verdict">
+{{range .Review.Choices}}<button type="button" class="review-session__choice" data-verdict="{{.}}" aria-pressed="false">{{.}}</button>{{end}}
+</div>
+<label class="review-session__summary-label" for="review-summary">Summary</label>
+<textarea id="review-summary" class="review-session__summary" placeholder="Add a short summary (optional)"></textarea>
+<div class="review-session__footer">
+<button type="button" id="review-submit" class="review-session__submit">Submit</button>
+<p id="review-status" class="review-session__status" role="status" aria-live="polite"></p>
+</div>
+</div>
+</aside>
+{{end}}
 <main id="document">
 {{.Content}}
 </main>

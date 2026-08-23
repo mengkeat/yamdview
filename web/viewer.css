@@ -528,3 +528,112 @@ hr {
 ::selection {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
+
+/* ── Review session ───────────────────────────────────── */
+
+.review-session {
+  max-width: var(--measure);
+  margin: calc(var(--pad-y) * -0.35) auto var(--pad-y);
+  padding: clamp(1.1rem, 0.8rem + 1vw, 1.6rem);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--paper-warm);
+  box-shadow: var(--shadow-md);
+}
+
+.review-session__eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.68em;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.review-session h1 {
+  margin: 0 0 0.55rem;
+  font-size: clamp(1.45rem, 1.2rem + 1.3vw, 2rem);
+}
+
+.review-session h1::after { display: none; }
+
+.review-session__prompt {
+  margin: 0 0 1rem;
+  color: var(--ink-soft);
+}
+
+.review-session__controls {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.review-session__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.review-session__choice,
+.review-session__submit {
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.5rem 0.9rem;
+  color: var(--ink);
+  background: var(--paper);
+  font: 500 0.78rem var(--font-mono);
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.review-session__choice:hover,
+.review-session__choice[aria-pressed="true"] {
+  color: var(--paper);
+  background: var(--accent);
+}
+
+.review-session__choice:active,
+.review-session__submit:active { transform: translateY(1px); }
+
+.review-session__summary-label {
+  color: var(--ink-soft);
+  font-size: 0.86em;
+}
+
+.review-session__summary {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 0.65rem 0.75rem;
+  color: var(--ink);
+  background: var(--paper);
+  font: 0.95rem var(--font-body);
+}
+
+.review-session__footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.review-session__submit {
+  border-color: var(--accent);
+  color: var(--paper);
+  background: var(--accent);
+}
+
+.review-session__submit:hover { filter: brightness(1.06); }
+
+.review-session__submit:disabled,
+.review-session__choice:disabled { cursor: default; opacity: 0.55; }
+
+.review-session__status {
+  color: var(--ink-soft);
+  font-size: 0.82em;
+}
+
+.review-session__status[data-state="error"] { color: var(--accent); }

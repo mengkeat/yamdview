@@ -345,6 +345,73 @@
     source.addEventListener("patch", handlePatch);
   }
 
+  // ── Review session ────────────────────────────────────
+
+  /** Wire the optional review banner without affecting ordinary viewers. */
+  function initReviewSession() {
+    var panel = document.getElementById("review-session");
+    if (!panel) return;
+
+    var token = panel.getAttribute("data-session-token") || "";
+    var choices = panel.querySelectorAll("[data-verdict]");
+    var submit = document.getElementById("review-submit");
+    var summary = document.getElementById("review-summary");
+    var status = document.getElementById("review-status");
+    var verdict = "";
+
+    function setStatus(message, state) {
+      status.textContent = message;
+      status.setAttribute("data-state", state || "");
+    }
+
+    for (var i = 0; i < choices.length; i++) {
+      choices[i].addEventListener("click", function () {
+        verdict = this.getAttribute("data-verdict") || "";
+        for (var j = 0; j < choices.length; j++) {
+          choices[j].setAttribute("aria-pressed", choices[j] === this ? "true" : "false");
+        }
+        setStatus("", "");
+      });
+    }
+
+    submit.addEventListener("click", function () {
+      if (!verdict) {
+        setStatus("Choose a verdict before submitting.", "error");
+        return;
+      }
+
+      submit.disabled = true;
+      for (var k = 0; k < choices.length; k++) choices[k].disabled = true;
+      setStatus("Submitting…", "");
+
+      fetch("/api/session/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Yamdview-Token": token,
+        },
+        body: JSON.stringify({ verdict: verdict, summary: summary.value }),
+      })
+        .then(function (response) {
+          return response.text().then(function (body) {
+            var payload = {};
+            try { payload = body ? JSON.parse(body) : {}; } catch (_) {}
+            if (!response.ok) throw new Error(payload.error || body || "Submission failed");
+            return payload;
+          });
+        })
+        .then(function () {
+          panel.setAttribute("data-session-state", "submitted");
+          setStatus("Review submitted. Thank you.", "success");
+        })
+        .catch(function (err) {
+          submit.disabled = false;
+          for (var m = 0; m < choices.length; m++) choices[m].disabled = false;
+          setStatus(err.message || "Could not submit review.", "error");
+        });
+    });
+  }
+
   // ── Initialisation ─────────────────────────────────────
 
   // Render math on initial page load.
@@ -355,6 +422,7 @@
       reportErrors(errors);
     }
     connectEvents();
+    initReviewSession();
   }
 
   // Gentle initial reveal.

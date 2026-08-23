@@ -11,6 +11,8 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/server"
+	"github.com/mengkeat/yamdview/internal/session"
+	"github.com/mengkeat/yamdview/web"
 )
 
 var testAssets = server.Assets{
@@ -568,5 +570,134 @@ func TestKatexStaticServing(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 without katex FS, got %d", resp.StatusCode)
+	}
+}
+
+func newReviewTestServer(t *testing.T) (*server.Server, *session.Session) {
+	t.Helper()
+	review, err := session.New("review-1", "Review this", "What do you think?", []string{"approve", "changes"}, []byte("# source"), document.DocumentSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets, err := web.LoadAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New("127.0.0.1:0", assets, testPageData("Document", "<p>Content</p>"), server.WithSession(review))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	t.Cleanup(func() { srv.Close() })
+	return srv, review
+}
+
+func TestReviewSessionMetadataAndPage(t *testing.T) {
+	srv, review := newReviewTestServer(t)
+
+	page, err := http.Get(srv.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageBody, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	if !strings.Contains(string(pageBody), `id="review-session"`) || !strings.Contains(string(pageBody), review.Token) {
+		t.Fatalf("review page is missing banner or injected token")
+	}
+	for _, want := range []string{"Review this", "What do you think?", "data-verdict=\"approve\"", "Summary", "Submit"} {
+		if !strings.Contains(string(pageBody), want) {
+			t.Errorf("review page missing %q", want)
+		}
+	}
+
+	resp, err := http.Get(srv.URL() + "api/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(apiBody, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["id"] != "review-1" || metadata["state"] != "open" {
+		t.Fatalf("unexpected session metadata: %#v", metadata)
+	}
+	if _, exposed := metadata["token"]; exposed || strings.Contains(string(apiBody), review.Token) {
+		t.Fatal("session API exposed the session token")
+	}
+}
+
+func TestReviewSessionSubmitRequiresToken(t *testing.T) {
+	srv, review := newReviewTestServer(t)
+
+	for name, token := range map[string]string{"missing": "", "wrong": "not-the-token"} {
+		t.Run(name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, srv.URL()+"api/session/submit", strings.NewReader(`{"verdict":"approve","summary":"Looks good"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if token != "" {
+				req.Header.Set(server.SessionTokenHeader, token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", resp.StatusCode)
+			}
+		})
+	}
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL()+"api/session/submit", strings.NewReader(`{"verdict":"approve","summary":"Looks good"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(server.SessionTokenHeader, review.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("successful submit status = %d, want 200", resp.StatusCode)
+	}
+	metadata := review.Metadata()
+	if metadata.State != session.Submitted || metadata.Verdict != "approve" || metadata.Summary != "Looks good" {
+		t.Fatalf("session was not submitted: %+v", metadata)
+	}
+}
+
+func TestReviewSessionSubmitValidatesMethodAndBody(t *testing.T) {
+	srv, review := newReviewTestServer(t)
+
+	get, err := http.Get(srv.URL() + "api/session/submit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	get.Body.Close()
+	if get.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET submit status = %d, want 405", get.StatusCode)
+	}
+
+	for _, body := range []string{"{", `{}`, `{"verdict":"approve"}`} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL()+"api/session/submit", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(server.SessionTokenHeader, review.Token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("body %q status = %d, want 400", body, resp.StatusCode)
+		}
 	}
 }
