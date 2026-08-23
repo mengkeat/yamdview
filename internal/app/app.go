@@ -304,7 +304,7 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	if timerStop != nil {
 		defer timerStop()
 	}
-	status := ReviewSubmitted
+	var status ReviewExitStatus
 	select {
 	case <-review.Done():
 	case <-timer:

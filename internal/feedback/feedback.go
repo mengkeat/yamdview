@@ -46,8 +46,10 @@ type Payload struct {
 }
 
 // Feedback and ReviewFeedback are descriptive aliases for Payload.
-type Feedback = Payload
-type ReviewFeedback = Payload
+type (
+	Feedback       = Payload
+	ReviewFeedback = Payload
+)
 
 // Validate checks that payload fields supported by this phase are valid.
 func (p Payload) Validate() error {
