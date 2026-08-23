@@ -300,3 +300,107 @@ func TestParseRejectsFileAsBackupDir(t *testing.T) {
 		t.Fatalf("expected not-a-directory error, got %v", err)
 	}
 }
+
+func TestParseLegacyInvocationSelectsViewMode(t *testing.T) {
+	cfg, err := Parse([]string{writeTempMD(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != ModeView {
+		t.Fatalf("expected view mode, got %q", cfg.Mode)
+	}
+}
+
+func TestParseExplicitViewSelectsViewMode(t *testing.T) {
+	cfg, err := Parse([]string{"view", "--no-open", writeTempMD(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != ModeView || !cfg.NoOpen {
+		t.Fatalf("expected view mode with NoOpen, got mode=%q noOpen=%v", cfg.Mode, cfg.NoOpen)
+	}
+}
+
+func TestParseReviewFlags(t *testing.T) {
+	cfg, err := Parse([]string{
+		"review",
+		"--title", "Plan review",
+		"--prompt", "Does this look right?",
+		"--choices", "Approve, Request changes,Reject",
+		"--format", "markdown",
+		"--output", "feedback.md",
+		"--timeout", "15m",
+		"--watch",
+		writeTempMD(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != ModeReview {
+		t.Errorf("expected review mode, got %q", cfg.Mode)
+	}
+	if cfg.Review.Title != "Plan review" || cfg.Review.Prompt != "Does this look right?" {
+		t.Errorf("unexpected title/prompt: %+v", cfg.Review)
+	}
+	wantChoices := []string{"Approve", "Request changes", "Reject"}
+	if strings.Join(cfg.Review.Choices, "|") != strings.Join(wantChoices, "|") {
+		t.Errorf("choices = %v, want %v", cfg.Review.Choices, wantChoices)
+	}
+	if cfg.Review.Format != "markdown" || cfg.Review.Output != "feedback.md" {
+		t.Errorf("unexpected format/output: %q/%q", cfg.Review.Format, cfg.Review.Output)
+	}
+	if cfg.Review.Timeout != 15*time.Minute || !cfg.Review.Watch {
+		t.Errorf("unexpected timeout/watch: %s/%v", cfg.Review.Timeout, cfg.Review.Watch)
+	}
+}
+
+func TestParseReviewDefaults(t *testing.T) {
+	cfg, err := Parse([]string{"review", writeTempMD(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Review.Format != "json" {
+		t.Errorf("expected default JSON format, got %q", cfg.Review.Format)
+	}
+	if cfg.Review.Timeout != 0 || cfg.Review.Watch || cfg.Review.Output != "" {
+		t.Errorf("unexpected review defaults: %+v", cfg.Review)
+	}
+}
+
+func TestParseReviewAcceptsStdin(t *testing.T) {
+	cfg, err := Parse([]string{"review", "-"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != ModeReview || cfg.MarkdownPath != "-" {
+		t.Fatalf("unexpected stdin config: %+v", cfg)
+	}
+}
+
+func TestParseViewerStillValidatesStdinPath(t *testing.T) {
+	_, err := Parse([]string{"-"})
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected viewer path validation error, got %v", err)
+	}
+}
+
+func TestParseReviewRejectsInvalidFormat(t *testing.T) {
+	_, err := Parse([]string{"review", "--format", "yaml", writeTempMD(t)})
+	if err == nil || !strings.Contains(err.Error(), "--format") {
+		t.Fatalf("expected format error, got %v", err)
+	}
+}
+
+func TestParseReviewRejectsNegativeTimeout(t *testing.T) {
+	_, err := Parse([]string{"review", "--timeout", "-1s", writeTempMD(t)})
+	if err == nil || !strings.Contains(err.Error(), "--timeout must be non-negative") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
+func TestParseRejectsUnknownSubcommand(t *testing.T) {
+	_, err := Parse([]string{"unknown", writeTempMD(t)})
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("expected ErrUsage for unknown subcommand, got %v", err)
+	}
+}
