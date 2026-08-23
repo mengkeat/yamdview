@@ -45,7 +45,7 @@ type Result struct {
 // changed between snapshot build and repair completion, that candidate is
 // reported stale and left untouched.
 func Repair(ctx context.Context, md goldmark.Markdown, p llm.Provider, snap document.DocumentSnapshot, src []byte) Result {
-	out := Result{Snapshot: cloneSnapshot(snap)}
+	out := Result{Snapshot: document.CloneSnapshot(snap)}
 	if p == nil || out.Snapshot.FullResetOnly || len(out.Snapshot.Blocks) == 0 {
 		return out
 	}
@@ -134,19 +134,6 @@ func toDocumentDiagnostics(diags []llm.Diagnostic, block *document.Block) []docu
 			StartLine: block.StartLine,
 			EndLine:   block.EndLine,
 		})
-	}
-	return out
-}
-
-// cloneSnapshot returns a deep-enough copy of snap: the blocks slice and each
-// block's diagnostics slice are copied so repairs never mutate the caller's
-// snapshot. String fields are immutable and need not be copied.
-func cloneSnapshot(s document.DocumentSnapshot) document.DocumentSnapshot {
-	out := s
-	out.Blocks = make([]document.Block, len(s.Blocks))
-	for i := range s.Blocks {
-		out.Blocks[i] = s.Blocks[i]
-		out.Blocks[i].Diagnostics = append([]document.Diagnostic(nil), s.Blocks[i].Diagnostics...)
 	}
 	return out
 }

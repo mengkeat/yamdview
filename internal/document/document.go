@@ -258,6 +258,18 @@ func ensureUniqueIDs(blocks []Block) {
 	}
 }
 
+// CloneSnapshot returns a copy whose block and diagnostic slices can be
+// modified without affecting the source snapshot.
+func CloneSnapshot(snapshot DocumentSnapshot) DocumentSnapshot {
+	clone := snapshot
+	clone.Blocks = make([]Block, len(snapshot.Blocks))
+	for i, block := range snapshot.Blocks {
+		clone.Blocks[i] = block
+		clone.Blocks[i].Diagnostics = append([]Diagnostic(nil), block.Diagnostics...)
+	}
+	return clone
+}
+
 // Diff computes patch operations from oldSnapshot to nextSnapshot. Unchanged
 // blocks retain their previous DOM IDs in the returned Snapshot.
 func Diff(oldSnapshot, nextSnapshot DocumentSnapshot) DiffResult {
@@ -372,9 +384,7 @@ func renderSourceForBlock(blockSource string, span blockSpan) (string, []Diagnos
 }
 
 func (s DocumentSnapshot) clone() DocumentSnapshot {
-	clone := s
-	clone.Blocks = append([]Block(nil), s.Blocks...)
-	return clone
+	return CloneSnapshot(s)
 }
 
 func blockID(ordinal int, kind BlockKind, normalized string) string {

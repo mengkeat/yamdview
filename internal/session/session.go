@@ -121,7 +121,7 @@ func New(id, title, prompt string, choices []string, source []byte, snapshot doc
 		Prompt:   prompt,
 		Choices:  append([]string(nil), choices...),
 		Source:   append([]byte(nil), source...),
-		Snapshot: cloneSnapshot(snapshot),
+		Snapshot: document.CloneSnapshot(snapshot),
 		State:    Open,
 		Token:    token,
 		OpenedAt: time.Now().UTC(),
@@ -206,14 +206,4 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(token[:]), nil
-}
-
-func cloneSnapshot(snapshot document.DocumentSnapshot) document.DocumentSnapshot {
-	clone := snapshot
-	clone.Blocks = make([]document.Block, len(snapshot.Blocks))
-	for i, block := range snapshot.Blocks {
-		clone.Blocks[i] = block
-		clone.Blocks[i].Diagnostics = append([]document.Diagnostic(nil), block.Diagnostics...)
-	}
-	return clone
 }

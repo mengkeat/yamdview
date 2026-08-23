@@ -131,13 +131,10 @@ func buildLLMProvider(s llm.Settings) (llm.Provider, llm.Mode, time.Duration, er
 	}
 	var cfg llm.Config
 	if s.ConfigPath != "" {
-		data, err := os.ReadFile(s.ConfigPath)
+		var err error
+		cfg, err = llm.ParseConfigFile(s.ConfigPath, os.ReadFile)
 		if err != nil {
-			return nil, s.Mode, s.Timeout, fmt.Errorf("read llm config: %w", err)
-		}
-		cfg, err = llm.ParseConfig(data)
-		if err != nil {
-			return nil, s.Mode, s.Timeout, err
+			return nil, s.Mode, s.Timeout, fmt.Errorf("load llm config: %w", err)
 		}
 	}
 	provider, err := llm.ResolveProvider(cfg, s)
@@ -160,10 +157,10 @@ func (a *App) llmContext(parent context.Context) (context.Context, context.Cance
 // enabled and in automatic mode. It never mutates the caller's snapshot:
 // accepted repairs produce a new snapshot; rejected/stale/timed-out/failed
 // candidates are reported as diagnostics and leave the rendering unchanged.
-// It returns the (possibly repaired) snapshot and a flat diagnostic list.
-func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.DocumentSnapshot) (document.DocumentSnapshot, []document.Diagnostic) {
+// It returns the (possibly repaired) snapshot.
+func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.DocumentSnapshot) document.DocumentSnapshot {
 	if a.provider == nil || a.llmMode != llm.ModeAuto {
-		return snap, nil
+		return snap
 	}
 	res := llmapp.Repair(ctx, a.md, a.provider, snap, src)
 	for _, d := range res.Diagnostics {
@@ -172,7 +169,7 @@ func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.Docu
 	if res.Applied > 0 || res.Rejected > 0 {
 		log.Printf("llm: %d applied, %d rejected via %s", res.Applied, res.Rejected, a.provider.Name())
 	}
-	return res.Snapshot, res.Diagnostics
+	return res.Snapshot
 }
 
 // Run executes the configured application flow.
@@ -238,10 +235,7 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	if err != nil {
 		return ReviewInternal, fmt.Errorf("create review session: %w", err)
 	}
-	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
-		Title:   title,
-		Content: template.HTML(snapshot.HTML),
-	}, server.WithKatexFS(web.KatexFS()), server.WithSession(review))
+	srv, err := server.New(a.cfg.Addr, a.assets, server.PageDataFromAssets(a.assets, title, template.HTML(snapshot.HTML)), server.WithKatexFS(web.KatexFS()), server.WithSession(review))
 	if err != nil {
 		return ReviewInternal, fmt.Errorf("create review server: %w", err)
 	}
@@ -424,12 +418,9 @@ func (a *App) exportStandalone() error {
 	// never accidentally write a provider-suggested change to the source file.
 	ctx, cancel := a.llmContext(context.Background())
 	defer cancel()
-	snapshot, _ = a.repairSnapshot(ctx, src, snapshot)
+	snapshot = a.repairSnapshot(ctx, src, snapshot)
 
-	html, err := server.ExportStandalone(a.assets, server.PageData{
-		Title:   a.cfg.MarkdownPath,
-		Content: template.HTML(snapshot.HTML),
-	}, a.cfg.ExportView)
+	html, err := server.ExportStandalone(a.assets, server.PageDataFromAssets(a.assets, a.cfg.MarkdownPath, template.HTML(snapshot.HTML)), a.cfg.ExportView)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
@@ -458,14 +449,11 @@ func (a *App) serve() error {
 		}
 	}
 	repairCtx, repairCancel := a.llmContext(context.Background())
-	snapshot, _ = a.repairSnapshot(repairCtx, src, snapshot)
+	snapshot = a.repairSnapshot(repairCtx, src, snapshot)
 	repairCancel()
 
 	// Create and start HTTP server.
-	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
-		Title:   a.cfg.MarkdownPath,
-		Content: template.HTML(snapshot.HTML),
-	}, server.WithKatexFS(web.KatexFS()))
+	srv, err := server.New(a.cfg.Addr, a.assets, server.PageDataFromAssets(a.assets, a.cfg.MarkdownPath, template.HTML(snapshot.HTML)), server.WithKatexFS(web.KatexFS()))
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
