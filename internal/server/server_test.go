@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/server"
@@ -700,4 +701,33 @@ func TestReviewSessionSubmitValidatesMethodAndBody(t *testing.T) {
 			t.Errorf("body %q status = %d, want 400", body, resp.StatusCode)
 		}
 	}
+}
+
+func TestServerCloseClosesActiveSSEClients(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+
+	resp, err := http.Get(srv.URL() + "events")
+	if err != nil {
+		srv.Close()
+		t.Fatal(err)
+	}
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.ReadAll(resp.Body)
+		close(readDone)
+	}()
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("close server: %v", err)
+	}
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("active SSE client remained open after server close")
+	}
+	_ = resp.Body.Close()
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -147,11 +148,34 @@ func TestReviewCancellationAndStdinNeverWatch(t *testing.T) {
 		result <- status
 	}()
 	waitReviewURL(t, application)
+	if got := application.ReviewSession().Metadata().Choices; !reflect.DeepEqual(got, []string{"approve", "request_changes", "comment"}) {
+		t.Errorf("default verdict choices = %v", got)
+	}
 	cancel()
 	if status := <-result; status != ReviewCancelled {
 		t.Fatalf("status = %d, want cancelled", status)
 	}
 	if !strings.Contains(output.String(), "Review feedback") {
 		t.Fatalf("missing markdown feedback: %s", output.String())
+	}
+}
+
+func TestReviewTimeoutStopsWatchedLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(source, []byte("# Timeout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	application := New(Config{
+		Mode: ModeReview, MarkdownPath: source, Addr: "127.0.0.1:0", NoOpen: true,
+		Review: ReviewConfig{Timeout: 10 * time.Millisecond, Watch: true, Format: feedback.FormatJSON},
+	}, testAssets)
+
+	status, err := application.RunReview()
+	if err != nil || status != ReviewTimeout {
+		t.Fatalf("review outcome = %d, %v", status, err)
+	}
+	if application.ReviewURL() != "" || application.ReviewSession() != nil {
+		t.Fatal("review lifecycle remained active after timeout")
 	}
 }

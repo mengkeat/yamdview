@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -68,6 +69,9 @@ func Parse(args []string) (Config, error) {
 			mode = ModeReview
 			args = args[1:]
 		}
+	}
+	if len(args) == 1 && looksLikeUnknownSubcommand(args[0]) {
+		return Config{}, ErrUsage
 	}
 
 	flags := flag.NewFlagSet("yamdview", flag.ContinueOnError)
@@ -227,4 +231,16 @@ func splitChoices(value string) []string {
 		}
 	}
 	return choices
+}
+
+// looksLikeUnknownSubcommand resolves the otherwise ambiguous one-token
+// invocation without breaking the legacy bare-file form. Existing files and
+// path-like names remain file arguments; a missing, extensionless word is
+// treated as a misspelled subcommand.
+func looksLikeUnknownSubcommand(value string) bool {
+	if value == "-" || strings.HasPrefix(value, "-") || filepath.Ext(value) != "" || strings.ContainsAny(value, `/\\`) {
+		return false
+	}
+	_, err := os.Stat(value)
+	return errors.Is(err, fs.ErrNotExist)
 }

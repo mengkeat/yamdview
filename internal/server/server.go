@@ -116,11 +116,17 @@ type ClientError struct {
 type Server struct {
 	listener net.Listener
 	handler  http.Handler
+	http     *http.Server
 	mu       sync.RWMutex
 	pageData PageData
 	tmpl     *template.Template
 	katexFS  fs.FS
 	review   *session.Session
+
+	lifecycleMu sync.Mutex
+	started     bool
+	closed      bool
+	serveDone   chan struct{}
 
 	clientsMu sync.Mutex
 	clients   map[chan sseEvent]struct{}
@@ -194,10 +200,11 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 	mux := http.NewServeMux()
 
 	s := &Server{
-		listener: ln,
-		pageData: data,
-		tmpl:     tmpl,
-		clients:  make(map[chan sseEvent]struct{}),
+		listener:  ln,
+		pageData:  data,
+		tmpl:      tmpl,
+		clients:   make(map[chan sseEvent]struct{}),
+		serveDone: make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -240,6 +247,7 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 	mux.HandleFunc("/events", s.handleEvents)
 
 	s.handler = mux
+	s.http = &http.Server{Handler: mux}
 
 	return s, nil
 }
@@ -256,8 +264,16 @@ func (s *Server) URL() string {
 
 // Start begins serving HTTP requests in a new goroutine.
 func (s *Server) Start() {
+	s.lifecycleMu.Lock()
+	if s.started || s.closed {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	s.started = true
+	s.lifecycleMu.Unlock()
+
 	go func() {
-		if err := s.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("server: %v", err)
 		}
 	}()
@@ -266,12 +282,44 @@ func (s *Server) Start() {
 // Serve serves HTTP requests on the listener. It blocks until the server
 // encounters an error (including http.ErrServerClosed).
 func (s *Server) Serve() error {
-	return http.Serve(s.listener, s.handler)
+	s.lifecycleMu.Lock()
+	if s.closed {
+		s.lifecycleMu.Unlock()
+		return http.ErrServerClosed
+	}
+	if s.started {
+		s.lifecycleMu.Unlock()
+		return errors.New("server already serving")
+	}
+	s.started = true
+	s.lifecycleMu.Unlock()
+	return s.serve()
 }
 
-// Close immediately closes the listener.
+func (s *Server) serve() error {
+	defer close(s.serveDone)
+	return s.http.Serve(s.listener)
+}
+
+// Close immediately closes the listener and active connections.
 func (s *Server) Close() error {
-	return s.listener.Close()
+	s.lifecycleMu.Lock()
+	if s.closed {
+		s.lifecycleMu.Unlock()
+		return nil
+	}
+	s.closed = true
+	started := s.started
+	s.lifecycleMu.Unlock()
+
+	// http.Server.Close also closes active connections, including SSE clients.
+	// Waiting for Serve to return keeps the server and its request handlers from
+	// outliving a completed review session.
+	err := s.http.Close()
+	if started {
+		<-s.serveDone
+	}
+	return err
 }
 
 // SetContent updates the rendered content served by the viewer.

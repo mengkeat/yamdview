@@ -404,3 +404,10 @@ func TestParseRejectsUnknownSubcommand(t *testing.T) {
 		t.Fatalf("expected ErrUsage for unknown subcommand, got %v", err)
 	}
 }
+
+func TestParseRejectsUnknownSingleTokenSubcommand(t *testing.T) {
+	_, err := Parse([]string{"revieww"})
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("expected ErrUsage for unknown single-token subcommand, got %v", err)
+	}
+}

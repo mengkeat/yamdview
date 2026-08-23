@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -229,7 +230,11 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	if title == "" {
 		title = a.cfg.MarkdownPath
 	}
-	review, err := session.New(id, title, a.cfg.Review.Prompt, a.cfg.Review.Choices, src, snapshot)
+	choices := a.cfg.Review.Choices
+	if len(choices) == 0 {
+		choices = []string{"approve", "request_changes", "comment"}
+	}
+	review, err := session.New(id, title, a.cfg.Review.Prompt, choices, src, snapshot)
 	if err != nil {
 		return ReviewInternal, fmt.Errorf("create review session: %w", err)
 	}
@@ -247,6 +252,7 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	defer func() {
 		_ = srv.Close()
 		a.reviewMu.Lock()
+		a.review = nil
 		a.reviewServer = nil
 		a.reviewMu.Unlock()
 	}()
@@ -259,6 +265,14 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	reviewCtx, cancelReview := context.WithCancel(ctx)
+	var reloadDone chan struct{}
+	defer func() {
+		cancelReview()
+		if reloadDone != nil {
+			<-reloadDone
+		}
+	}()
 
 	// The default is frozen. Stdin is never passed to watcher.New.
 	if a.cfg.Review.Watch && a.cfg.MarkdownPath != "-" {
@@ -267,8 +281,12 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 			return ReviewInternal, fmt.Errorf("watch markdown file: %w", watchErr)
 		}
 		defer fileWatcher.Close()
-		changes, watchErrs := fileWatcher.Watch(ctx)
-		go a.reloadLoop(ctx, srv, changes, watchErrs, snapshot)
+		changes, watchErrs := fileWatcher.Watch(reviewCtx)
+		reloadDone = make(chan struct{})
+		go func() {
+			defer close(reloadDone)
+			a.reloadLoop(reviewCtx, srv, changes, watchErrs, snapshot)
+		}()
 	}
 	if !a.cfg.NoOpen {
 		if err := browser.Open(srv.URL()); err != nil {
@@ -290,15 +308,17 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	select {
 	case <-review.Done():
 	case <-timer:
-		if err := review.Timeout(); err != nil {
+		if err := review.Timeout(); err != nil && !errors.Is(err, session.ErrInvalidTransition) {
 			return ReviewInternal, fmt.Errorf("timeout review: %w", err)
 		}
-		status = ReviewTimeout
 	case <-ctx.Done():
-		if err := review.Cancel(); err != nil {
+		if err := review.Cancel(); err != nil && !errors.Is(err, session.ErrInvalidTransition) {
 			return ReviewInternal, fmt.Errorf("cancel review: %w", err)
 		}
-		status = ReviewCancelled
+	}
+	cancelReview()
+	if reloadDone != nil {
+		<-reloadDone
 	}
 	switch review.CurrentState() {
 	case session.Submitted:
@@ -307,6 +327,8 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 		status = ReviewTimeout
 	case session.Cancelled:
 		status = ReviewCancelled
+	default:
+		return ReviewInternal, errors.New("review ended without a terminal state")
 	}
 	if err := a.writeReviewFeedback(review); err != nil {
 		return ReviewInternal, err
