@@ -8,9 +8,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
 )
 
@@ -35,6 +37,14 @@ const (
 // submitted, timed out, or cancelled.
 var ErrInvalidTransition = errors.New("invalid session transition")
 
+// Errors returned by annotation operations.
+var (
+	ErrInvalidAnnotation       = errors.New("invalid annotation")
+	ErrAnnotationNotFound      = errors.New("annotation not found")
+	ErrAnnotationExists        = errors.New("annotation already exists")
+	ErrTerminalSessionMutation = errors.New("terminal session cannot be mutated")
+)
+
 const tokenBytes = 32
 
 // Metadata is the safe, mutable state of a review session. It intentionally
@@ -56,8 +66,8 @@ type Metadata struct {
 //
 // Source, Choices, and Snapshot are copied when the session is created, so
 // later changes to the constructor's inputs do not change the review. State
-// transitions are concurrency-safe; use CurrentState when reading State from
-// concurrent code.
+// transitions and annotation operations are concurrency-safe; use CurrentState
+// when reading State from concurrent code.
 type Session struct {
 	ID       string
 	Title    string
@@ -75,8 +85,9 @@ type Session struct {
 	OpenedAt    time.Time
 	SubmittedAt time.Time
 
-	mu   sync.RWMutex
-	done chan struct{}
+	mu          sync.RWMutex
+	annotations []annotation.Annotation
+	done        chan struct{}
 }
 
 // Metadata returns a concurrency-safe copy of the session state suitable for
@@ -132,6 +143,189 @@ func New(id, title, prompt string, choices []string, source []byte, snapshot doc
 // NewSession is an explicit alias for New.
 func NewSession(id, title, prompt string, choices []string, source []byte, snapshot document.DocumentSnapshot) (*Session, error) {
 	return New(id, title, prompt, choices, source, snapshot)
+}
+
+// NewWithAnnotations creates a session and adds the supplied annotations using
+// the same validation, anchoring, and copy rules as CreateAnnotation.
+func NewWithAnnotations(id, title, prompt string, choices []string, source []byte, snapshot document.DocumentSnapshot, annotations []annotation.Annotation) (*Session, error) {
+	s, err := New(id, title, prompt, choices, source, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range annotations {
+		if _, err := s.CreateAnnotation(item); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+// AnnotationSnapshot returns a deep copy of all annotations in insertion
+// order. The returned slice and its SourceSpan values are independent of the
+// session and may be safely modified by the caller.
+func (s *Session) AnnotationSnapshot() []annotation.Annotation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneAnnotations(s.annotations)
+}
+
+// AnnotationsSnapshot is an explicit alias for AnnotationSnapshot.
+func (s *Session) AnnotationsSnapshot() []annotation.Annotation {
+	return s.AnnotationSnapshot()
+}
+
+// SnapshotAnnotations is an explicit alias for AnnotationSnapshot.
+func (s *Session) SnapshotAnnotations() []annotation.Annotation {
+	return s.AnnotationSnapshot()
+}
+
+// ListAnnotations returns all annotations in insertion order.
+func (s *Session) ListAnnotations() []annotation.Annotation {
+	return s.AnnotationSnapshot()
+}
+
+// Annotations returns all annotations in insertion order. It is retained as a
+// concise accessor for handlers and callers that model annotations as a list.
+func (s *Session) Annotations() []annotation.Annotation {
+	return s.AnnotationSnapshot()
+}
+
+// GetAnnotation returns a copy of one annotation.
+func (s *Session) GetAnnotation(id string) (annotation.Annotation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, item := range s.annotations {
+		if item.ID == id {
+			return cloneAnnotation(item), nil
+		}
+	}
+	return annotation.Annotation{}, fmt.Errorf("%w: %s", ErrAnnotationNotFound, id)
+}
+
+// FindAnnotation returns a copy of one annotation and whether it exists.
+func (s *Session) FindAnnotation(id string) (annotation.Annotation, bool) {
+	item, err := s.GetAnnotation(id)
+	return item, err == nil
+}
+
+// CreateAnnotation validates and stores an annotation, resolving its quote
+// against the current document snapshot. IDs and missing timestamps are
+// assigned by the server. The returned annotation is a copy.
+func (s *Session) CreateAnnotation(input annotation.Annotation) (annotation.Annotation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureOpen(); err != nil {
+		return annotation.Annotation{}, err
+	}
+	if err := validateAnnotation(input); err != nil {
+		return annotation.Annotation{}, err
+	}
+
+	item := cloneAnnotation(input)
+	if item.ID == "" {
+		id, err := randomToken()
+		if err != nil {
+			return annotation.Annotation{}, fmt.Errorf("generate annotation ID: %w", err)
+		}
+		item.ID = "annotation-" + id[:16]
+	}
+	for _, existing := range s.annotations {
+		if existing.ID == item.ID {
+			return annotation.Annotation{}, fmt.Errorf("%w: %s", ErrAnnotationExists, item.ID)
+		}
+	}
+	now := time.Now().UTC()
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	item = resolveAnnotation(item, s.Snapshot)
+	s.annotations = append(s.annotations, item)
+	return cloneAnnotation(item), nil
+}
+
+// UpdateAnnotation applies a partial update to an existing annotation. Empty
+// anchor fields retain their current values, allowing PATCH handlers to update
+// only the comment. The anchor is resolved again against the current snapshot.
+func (s *Session) UpdateAnnotation(id string, input annotation.Annotation) (annotation.Annotation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureOpen(); err != nil {
+		return annotation.Annotation{}, err
+	}
+	index := -1
+	for i := range s.annotations {
+		if s.annotations[i].ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return annotation.Annotation{}, fmt.Errorf("%w: %s", ErrAnnotationNotFound, id)
+	}
+
+	current := s.annotations[index]
+	item := mergeAnnotationUpdate(id, current, input)
+	if err := validateAnnotation(item); err != nil {
+		return annotation.Annotation{}, err
+	}
+	item.CreatedAt = current.CreatedAt
+	item.UpdatedAt = time.Now().UTC()
+	item = resolveAnnotation(item, s.Snapshot)
+	s.annotations[index] = item
+	return cloneAnnotation(item), nil
+}
+
+// UpdateAnnotationRecord updates an annotation using its ID field. It is a
+// convenience for callers that already hold a complete record.
+func (s *Session) UpdateAnnotationRecord(input annotation.Annotation) (annotation.Annotation, error) {
+	if input.ID == "" {
+		return annotation.Annotation{}, fmt.Errorf("%w: annotation id is required", ErrInvalidAnnotation)
+	}
+	return s.UpdateAnnotation(input.ID, input)
+}
+
+// DeleteAnnotation removes an annotation by ID.
+func (s *Session) DeleteAnnotation(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	for i := range s.annotations {
+		if s.annotations[i].ID == id {
+			copy(s.annotations[i:], s.annotations[i+1:])
+			s.annotations = s.annotations[:len(s.annotations)-1]
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrAnnotationNotFound, id)
+}
+
+// UpdateSnapshot replaces the document source and snapshot, then re-anchors
+// every annotation. Annotations that cannot be resolved are retained with an
+// outdated status rather than being discarded.
+func (s *Session) UpdateSnapshot(source []byte, snapshot document.DocumentSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	s.Source = append([]byte(nil), source...)
+	s.Snapshot = document.CloneSnapshot(snapshot)
+	s.annotations = cloneAnnotations(annotation.ReanchorAll(s.annotations, s.Snapshot))
+	return nil
+}
+
+// UpdateDocument is an explicit alias for UpdateSnapshot.
+func (s *Session) UpdateDocument(source []byte, snapshot document.DocumentSnapshot) error {
+	return s.UpdateSnapshot(source, snapshot)
 }
 
 // Submit records the review and moves the session to submitted.
@@ -198,6 +392,99 @@ func (s *Session) finish(next State, verdict, summary string) error {
 	s.SubmittedAt = time.Now().UTC()
 	close(s.done)
 	return nil
+}
+
+func (s *Session) ensureOpen() error {
+	if s.State != Open {
+		return fmt.Errorf("%w: session is %s", ErrTerminalSessionMutation, s.State)
+	}
+	return nil
+}
+
+func validateAnnotation(item annotation.Annotation) error {
+	if err := item.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidAnnotation, err)
+	}
+	if item.Kind == annotation.KindSuggestion && strings.TrimSpace(item.SuggestedReplacement) == "" {
+		return fmt.Errorf("%w: suggestion suggested_replacement is required", ErrInvalidAnnotation)
+	}
+	if item.Kind != annotation.KindSuggestion && strings.TrimSpace(item.SuggestedReplacement) != "" {
+		return fmt.Errorf("%w: suggested_replacement is only valid for suggestions", ErrInvalidAnnotation)
+	}
+	return nil
+}
+
+func mergeAnnotationUpdate(id string, current, input annotation.Annotation) annotation.Annotation {
+	item := cloneAnnotation(input)
+	item.ID = id
+	if item.Kind == "" {
+		item.Kind = current.Kind
+	}
+	if item.BlockID == "" {
+		item.BlockID = current.BlockID
+	}
+	if item.Quote == "" {
+		item.Quote = current.Quote
+	}
+	if item.Prefix == "" {
+		item.Prefix = current.Prefix
+	}
+	if item.Suffix == "" {
+		item.Suffix = current.Suffix
+	}
+	if item.Comment == "" {
+		item.Comment = current.Comment
+	}
+	if item.SuggestedReplacement == "" && item.Kind == current.Kind {
+		item.SuggestedReplacement = current.SuggestedReplacement
+	}
+	if item.GroupID == "" {
+		item.GroupID = current.GroupID
+	}
+	if item.StartLine == 0 {
+		item.StartLine = current.StartLine
+	}
+	if item.EndLine == 0 {
+		item.EndLine = current.EndLine
+	}
+	return item
+}
+
+func resolveAnnotation(item annotation.Annotation, snapshot document.DocumentSnapshot) annotation.Annotation {
+	item.SourceSpan = annotation.Resolve(snapshot, item)
+	if item.SourceSpan == nil {
+		item.Status = annotation.StatusOutdated
+		return item
+	}
+	item.Status = annotation.StatusActive
+	for _, block := range snapshot.Blocks {
+		if block.ID == item.BlockID {
+			item.StartLine = block.StartLine
+			item.EndLine = block.EndLine
+			break
+		}
+	}
+	return item
+}
+
+func cloneAnnotation(item annotation.Annotation) annotation.Annotation {
+	clone := item
+	if item.SourceSpan != nil {
+		span := *item.SourceSpan
+		clone.SourceSpan = &span
+	}
+	return clone
+}
+
+func cloneAnnotations(items []annotation.Annotation) []annotation.Annotation {
+	if items == nil {
+		return []annotation.Annotation{}
+	}
+	clones := make([]annotation.Annotation, len(items))
+	for i, item := range items {
+		clones[i] = cloneAnnotation(item)
+	}
+	return clones
 }
 
 func randomToken() (string, error) {
