@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/session"
 )
@@ -167,6 +168,7 @@ const (
 	SessionTokenHeader = "X-Yamdview-Token"
 	maxClientErrorBody = 1 << 20
 	maxClientErrors    = 100
+	maxAnnotationBody  = 1 << 20
 )
 
 // WithSession attaches a review session to the served page and session API.
@@ -243,6 +245,8 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 	// Review session metadata and token-gated submission endpoints.
 	mux.HandleFunc("/api/session", s.handleSessionMetadata)
 	mux.HandleFunc("/api/session/submit", s.handleSessionSubmit)
+	mux.HandleFunc("/api/session/annotations", s.handleAnnotationCollection)
+	mux.HandleFunc("/api/session/annotations/", s.handleAnnotationItem)
 
 	// Client error reporting endpoint.
 	mux.HandleFunc("/client-error", s.handleClientError)
@@ -455,16 +459,17 @@ func writeSSE(w http.ResponseWriter, event sseEvent) {
 }
 
 type sessionMetadataResponse struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Prompt      string    `json:"prompt"`
-	Choices     []string  `json:"choices"`
-	State       string    `json:"state"`
-	Verdict     string    `json:"verdict"`
-	Summary     string    `json:"summary"`
-	Revision    int       `json:"revision"`
-	OpenedAt    time.Time `json:"opened_at"`
-	SubmittedAt time.Time `json:"submitted_at,omitempty"`
+	ID          string                  `json:"id"`
+	Title       string                  `json:"title"`
+	Prompt      string                  `json:"prompt"`
+	Choices     []string                `json:"choices"`
+	State       string                  `json:"state"`
+	Verdict     string                  `json:"verdict"`
+	Summary     string                  `json:"summary"`
+	Revision    int                     `json:"revision"`
+	OpenedAt    time.Time               `json:"opened_at"`
+	SubmittedAt time.Time               `json:"submitted_at,omitempty"`
+	Annotations []annotation.Annotation `json:"annotations"`
 }
 
 // handleSessionMetadata returns session metadata without the authentication
@@ -492,7 +497,366 @@ func (s *Server) handleSessionMetadata(w http.ResponseWriter, r *http.Request) {
 		Revision:    metadata.Revision,
 		OpenedAt:    metadata.OpenedAt,
 		SubmittedAt: metadata.SubmittedAt,
+		Annotations: s.review.AnnotationSnapshot(),
 	})
+}
+
+// annotationCreateRequest is the browser-facing create shape. Server-owned
+// fields such as IDs, timestamps, status, and source spans are not accepted.
+type annotationCreateRequest struct {
+	Kind                 annotation.Kind             `json:"kind"`
+	Pieces               []annotation.SelectionPiece `json:"pieces"`
+	BlockID              string                      `json:"block_id"`
+	StartLine            int                         `json:"start_line"`
+	EndLine              int                         `json:"end_line"`
+	Quote                string                      `json:"quote"`
+	Prefix               string                      `json:"prefix"`
+	Suffix               string                      `json:"suffix"`
+	Comment              string                      `json:"comment"`
+	SuggestedReplacement string                      `json:"suggested_replacement"`
+}
+
+type annotationPatchRequest struct {
+	Kind                 *annotation.Kind `json:"kind"`
+	BlockID              *string          `json:"block_id"`
+	StartLine            *int             `json:"start_line"`
+	EndLine              *int             `json:"end_line"`
+	Quote                *string          `json:"quote"`
+	Prefix               *string          `json:"prefix"`
+	Suffix               *string          `json:"suffix"`
+	Comment              *string          `json:"comment"`
+	SuggestedReplacement *string          `json:"suggested_replacement"`
+}
+
+type apiErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// handleAnnotationCollection creates one or more annotations. A selection
+// with multiple pieces is split into annotations sharing one group ID.
+func (s *Server) handleAnnotationCollection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.authorizeAnnotationMutation(w, r) {
+		return
+	}
+
+	var req annotationCreateRequest
+	fields, ok := decodeAnnotationBody(w, r, &req)
+	if !ok {
+		return
+	}
+	items, err := buildAnnotationCreateRequest(req, fields)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	created := make([]annotation.Annotation, 0, len(items))
+	for _, item := range items {
+		item, err = s.review.CreateAnnotation(item)
+		if err != nil {
+			writeAnnotationMutationError(w, err)
+			return
+		}
+		created = append(created, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusCreated)
+	if len(created) == 1 {
+		_ = json.NewEncoder(w).Encode(created[0])
+		return
+	}
+	_ = json.NewEncoder(w).Encode(created)
+}
+
+func (s *Server) handleAnnotationItem(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/session/annotations/")
+	if id == "" || strings.Contains(id, "/") {
+		writeAPIError(w, http.StatusNotFound, "annotation not found")
+		return
+	}
+	if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.authorizeAnnotationMutation(w, r) {
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := s.review.DeleteAnnotation(id); err != nil {
+			writeAnnotationMutationError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	var req annotationPatchRequest
+	fields, ok := decodeAnnotationBody(w, r, &req)
+	if !ok {
+		return
+	}
+	if len(fields) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "at least one annotation field is required")
+		return
+	}
+
+	current, err := s.review.GetAnnotation(id)
+	if err != nil {
+		writeAnnotationMutationError(w, err)
+		return
+	}
+	if err := validateAnnotationPatch(req, current); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	input := annotation.Annotation{}
+	if req.Kind != nil {
+		input.Kind = *req.Kind
+	}
+	if req.BlockID != nil {
+		input.BlockID = *req.BlockID
+	}
+	if req.StartLine != nil {
+		input.StartLine = *req.StartLine
+	}
+	if req.EndLine != nil {
+		input.EndLine = *req.EndLine
+	}
+	if req.Quote != nil {
+		input.Quote = *req.Quote
+	}
+	if req.Prefix != nil {
+		input.Prefix = *req.Prefix
+	}
+	if req.Suffix != nil {
+		input.Suffix = *req.Suffix
+	}
+	if req.Comment != nil {
+		input.Comment = *req.Comment
+	}
+	if req.SuggestedReplacement != nil {
+		input.SuggestedReplacement = *req.SuggestedReplacement
+	}
+
+	updated, err := s.review.UpdateAnnotation(id, input)
+	if err != nil {
+		writeAnnotationMutationError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(updated)
+}
+
+func (s *Server) authorizeAnnotationMutation(w http.ResponseWriter, r *http.Request) bool {
+	if s.review == nil {
+		writeAPIError(w, http.StatusNotFound, "review session not found")
+		return false
+	}
+	if !s.review.TokenMatches(r.Header.Get(SessionTokenHeader)) {
+		writeAPIError(w, http.StatusForbidden, "invalid or missing session token")
+		return false
+	}
+	if s.review.CurrentState() != session.Open {
+		writeAPIError(w, http.StatusConflict, "session is no longer open")
+		return false
+	}
+	return true
+}
+
+func buildAnnotationCreateRequest(req annotationCreateRequest, fields map[string]json.RawMessage) ([]annotation.Annotation, error) {
+	if req.Kind == "" {
+		return nil, errors.New("annotation kind is required")
+	}
+	if err := validateAnnotationKindAndSuggestion(req.Kind, req.SuggestedReplacement); err != nil {
+		return nil, err
+	}
+
+	if _, hasPieces := fields["pieces"]; hasPieces {
+		if len(req.Pieces) == 0 {
+			return nil, errors.New("annotation pieces must not be empty")
+		}
+		if hasAnyField(fields, "block_id", "start_line", "end_line", "quote", "prefix", "suffix") {
+			return nil, errors.New("pieces cannot be combined with a single annotation anchor")
+		}
+		seenBlocks := make(map[string]struct{}, len(req.Pieces))
+		for i, piece := range req.Pieces {
+			if err := validateSelectionPiece(i, piece); err != nil {
+				return nil, err
+			}
+			if _, exists := seenBlocks[piece.BlockID]; exists {
+				return nil, fmt.Errorf("selection piece %d repeats block_id %q", i, piece.BlockID)
+			}
+			seenBlocks[piece.BlockID] = struct{}{}
+		}
+		items, err := annotation.SplitSelection(req.Pieces)
+		if err != nil {
+			return nil, fmt.Errorf("invalid annotation selection: %w", err)
+		}
+		for i := range items {
+			items[i].Kind = req.Kind
+			items[i].Comment = req.Comment
+			items[i].SuggestedReplacement = req.SuggestedReplacement
+		}
+		return items, nil
+	}
+
+	if err := validateAnchor(req.BlockID, req.Quote, req.StartLine, req.EndLine); err != nil {
+		return nil, err
+	}
+	return []annotation.Annotation{{
+		Kind: req.Kind, BlockID: req.BlockID, StartLine: req.StartLine, EndLine: req.EndLine,
+		Quote: req.Quote, Prefix: req.Prefix, Suffix: req.Suffix,
+		Comment: req.Comment, SuggestedReplacement: req.SuggestedReplacement,
+	}}, nil
+}
+
+func validateSelectionPiece(index int, piece annotation.SelectionPiece) error {
+	if err := validateAnchor(piece.BlockID, piece.Quote, piece.StartLine, piece.EndLine); err != nil {
+		return fmt.Errorf("selection piece %d: %w", index, err)
+	}
+	return nil
+}
+
+func validateAnchor(blockID, quote string, startLine, endLine int) error {
+	if strings.TrimSpace(blockID) == "" {
+		return errors.New("annotation block_id is required")
+	}
+	if strings.TrimSpace(quote) == "" {
+		return errors.New("annotation quote is required")
+	}
+	if startLine < 0 || endLine < 0 {
+		return errors.New("annotation line numbers cannot be negative")
+	}
+	if startLine > 0 && endLine > 0 && endLine < startLine {
+		return errors.New("annotation end_line cannot be before start_line")
+	}
+	return nil
+}
+
+func validateAnnotationKindAndSuggestion(kind annotation.Kind, replacement string) error {
+	if err := (annotation.Annotation{Kind: kind, BlockID: "block", Quote: "quote"}).Validate(); err != nil {
+		return err
+	}
+	if kind == annotation.KindSuggestion && strings.TrimSpace(replacement) == "" {
+		return errors.New("suggestion suggested_replacement is required")
+	}
+	if kind != annotation.KindSuggestion && strings.TrimSpace(replacement) != "" {
+		return errors.New("suggested_replacement is only valid for suggestions")
+	}
+	return nil
+}
+
+func validateAnnotationPatch(req annotationPatchRequest, current annotation.Annotation) error {
+	if req.Kind != nil && *req.Kind == "" {
+		return errors.New("annotation kind cannot be empty")
+	}
+	if req.BlockID != nil && strings.TrimSpace(*req.BlockID) == "" {
+		return errors.New("annotation block_id cannot be empty")
+	}
+	if req.Quote != nil && strings.TrimSpace(*req.Quote) == "" {
+		return errors.New("annotation quote cannot be empty")
+	}
+	if (req.StartLine != nil && *req.StartLine < 0) || (req.EndLine != nil && *req.EndLine < 0) {
+		return errors.New("annotation line numbers cannot be negative")
+	}
+	startLine, endLine := current.StartLine, current.EndLine
+	if req.StartLine != nil {
+		startLine = *req.StartLine
+	}
+	if req.EndLine != nil {
+		endLine = *req.EndLine
+	}
+	if startLine > 0 && endLine > 0 && endLine < startLine {
+		return errors.New("annotation end_line cannot be before start_line")
+	}
+
+	kind := current.Kind
+	if req.Kind != nil {
+		kind = *req.Kind
+	}
+	replacement := current.SuggestedReplacement
+	if req.Kind != nil && kind != current.Kind && req.SuggestedReplacement == nil {
+		replacement = ""
+	}
+	if req.SuggestedReplacement != nil {
+		replacement = *req.SuggestedReplacement
+	}
+	return validateAnnotationKindAndSuggestion(kind, replacement)
+}
+
+func hasAnyField(fields map[string]json.RawMessage, names ...string) bool {
+	for _, name := range names {
+		if _, ok := fields[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeAnnotationBody(w http.ResponseWriter, r *http.Request, target any) (map[string]json.RawMessage, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAnnotationBody))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeAPIError(w, http.StatusRequestEntityTooLarge, "annotation request body is too large")
+		} else {
+			writeAPIError(w, http.StatusBadRequest, "could not read annotation request body")
+		}
+		return nil, false
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON body: %v", err))
+		return nil, false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeAPIError(w, http.StatusBadRequest, "request body must contain one JSON object")
+		return nil, false
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
+		writeAPIError(w, http.StatusBadRequest, "request body must contain one JSON object")
+		return nil, false
+	}
+	for name, value := range fields {
+		if string(value) == "null" {
+			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("annotation field %q cannot be null", name))
+			return nil, false
+		}
+	}
+	return fields, true
+}
+
+func writeAnnotationMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, session.ErrAnnotationNotFound):
+		writeAPIError(w, http.StatusNotFound, "annotation not found")
+	case errors.Is(err, session.ErrTerminalSessionMutation):
+		writeAPIError(w, http.StatusConflict, "session is no longer open")
+	case errors.Is(err, session.ErrInvalidAnnotation):
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, session.ErrAnnotationExists):
+		writeAPIError(w, http.StatusConflict, "annotation already exists")
+	default:
+		writeAPIError(w, http.StatusInternalServerError, "could not mutate annotation")
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(apiErrorResponse{Error: message})
 }
 
 type sessionSubmitRequest struct {

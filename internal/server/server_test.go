@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"html/template"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/session"
@@ -736,6 +738,161 @@ func TestReviewSessionSubmitValidatesMethodAndBody(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("body %q status = %d, want 400", body, resp.StatusCode)
+		}
+	}
+}
+
+func newAnnotationTestServer(t *testing.T) (*server.Server, *session.Session) {
+	t.Helper()
+	snapshot := document.DocumentSnapshot{Blocks: []document.Block{
+		{ID: "b1", Source: "first selected text", SourceStart: 0, SourceEnd: 19, StartLine: 1, EndLine: 1},
+		{ID: "b2", Source: "second selected text", SourceStart: 20, SourceEnd: 41, StartLine: 3, EndLine: 3},
+	}}
+	review, err := session.New("review-annotations", "Review", "Prompt", nil, []byte("first selected text\n\nsecond selected text"), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Document", "<p>Content</p>"), server.WithSession(review))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	t.Cleanup(func() { srv.Close() })
+	return srv, review
+}
+
+func annotationRequest(t *testing.T, method, url, token, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set(server.SessionTokenHeader, token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestReviewAnnotationCRUDAndReloadMetadata(t *testing.T) {
+	srv, review := newAnnotationTestServer(t)
+
+	for _, token := range []string{"", "wrong"} {
+		resp := annotationRequest(t, http.MethodPost, srv.URL()+"api/session/annotations?token="+review.Token, token, `{"kind":"comment","block_id":"b1","quote":"selected","comment":"note"}`)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("token %q status = %d, want 403", token, resp.StatusCode)
+		}
+	}
+
+	resp := annotationRequest(t, http.MethodPost, srv.URL()+"api/session/annotations", review.Token, `{"kind":"comment","block_id":"b1","quote":"selected","comment":"note"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", resp.StatusCode)
+	}
+	var created annotation.Annotation
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if created.ID == "" || created.Status != annotation.StatusActive || created.SourceSpan == nil {
+		t.Fatalf("created annotation = %#v", created)
+	}
+	encoded, _ := json.Marshal(created)
+	if bytes.Contains(encoded, []byte(`"text"`)) {
+		t.Fatal("source span text leaked into JSON")
+	}
+
+	resp = annotationRequest(t, http.MethodPatch, srv.URL()+"api/session/annotations/"+created.ID, review.Token, `{"comment":"updated","quote":"selected"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200", resp.StatusCode)
+	}
+	var updated annotation.Annotation
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if updated.Comment != "updated" {
+		t.Fatalf("updated annotation = %#v", updated)
+	}
+
+	resp, err := http.Get(srv.URL() + "api/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata struct {
+		Annotations []annotation.Annotation `json:"annotations"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(metadata.Annotations) != 1 || metadata.Annotations[0].Comment != "updated" {
+		t.Fatalf("metadata annotations = %#v", metadata.Annotations)
+	}
+
+	resp = annotationRequest(t, http.MethodDelete, srv.URL()+"api/session/annotations/"+created.ID, review.Token, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+}
+
+func TestReviewAnnotationMultiBlockGroupingAndValidation(t *testing.T) {
+	srv, review := newAnnotationTestServer(t)
+	body := `{"kind":"suggestion","pieces":[{"block_id":"b1","start_line":1,"end_line":1,"quote":"selected"},{"block_id":"b2","start_line":3,"end_line":3,"quote":"selected"}],"comment":"fix both","suggested_replacement":"replacement"}`
+	resp := annotationRequest(t, http.MethodPost, srv.URL()+"api/session/annotations", review.Token, body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("multi-block create status = %d, want 201", resp.StatusCode)
+	}
+	var created []annotation.Annotation
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(created) != 2 || created[0].GroupID == "" || created[0].GroupID != created[1].GroupID {
+		t.Fatalf("multi-block group = %#v", created)
+	}
+	for _, item := range created {
+		if item.Kind != annotation.KindSuggestion || item.Comment != "fix both" || item.SuggestedReplacement != "replacement" {
+			t.Fatalf("split fields not applied: %#v", item)
+		}
+	}
+
+	for _, invalid := range []string{
+		`{"kind":"comment","block_id":"b1","quote":"x","extra":true}`,
+		`{"kind":"suggestion","block_id":"b1","quote":"x"}`,
+		`{"kind":"comment","block_id":"b1","quote":"x","suggested_replacement":"bad"}`,
+		`{"kind":"comment","block_id":"b1","quote":"x"} {}`,
+	} {
+		resp := annotationRequest(t, http.MethodPost, srv.URL()+"api/session/annotations", review.Token, invalid)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("invalid body %q status = %d, want 400", invalid, resp.StatusCode)
+		}
+	}
+}
+
+func TestReviewAnnotationMutationsRejectTerminalSession(t *testing.T) {
+	srv, review := newAnnotationTestServer(t)
+	if err := review.Submit("approve", "done"); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPatch, http.MethodDelete} {
+		url := srv.URL() + "api/session/annotations"
+		if method != http.MethodPost {
+			url += "/unknown"
+		}
+		resp := annotationRequest(t, method, url, review.Token, `{"comment":"x"}`)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("%s terminal status = %d, want 409", method, resp.StatusCode)
 		}
 	}
 }
