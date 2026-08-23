@@ -141,12 +141,12 @@ func (s *Session) Submit(verdict, summary string) error {
 
 // Timeout marks an open session as timed out.
 func (s *Session) Timeout() error {
-	return s.finish(Timeout, "", "")
+	return s.finish(Timeout, "timeout", "")
 }
 
 // Cancel marks an open session as cancelled.
 func (s *Session) Cancel() error {
-	return s.finish(Cancelled, "", "")
+	return s.finish(Cancelled, "cancelled", "")
 }
 
 // CurrentState returns the session's state safely for concurrent callers.

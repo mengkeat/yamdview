@@ -3,11 +3,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,17 +19,57 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/feedback"
 	"github.com/mengkeat/yamdview/internal/fixer"
 	"github.com/mengkeat/yamdview/internal/llm"
 	"github.com/mengkeat/yamdview/internal/llmapp"
 	"github.com/mengkeat/yamdview/internal/markdown"
 	"github.com/mengkeat/yamdview/internal/server"
+	"github.com/mengkeat/yamdview/internal/session"
 	"github.com/mengkeat/yamdview/internal/watcher"
 	"github.com/mengkeat/yamdview/web"
 )
 
+// Mode selects the application flow requested by the command line.
+type Mode string
+
+const (
+	ModeView   Mode = "view"
+	ModeReview Mode = "review"
+)
+
+// ReviewConfig contains options specific to a blocking review session.
+type ReviewConfig struct {
+	Title   string
+	Prompt  string
+	Choices []string
+	Format  feedback.Format
+	Output  string
+	Timeout time.Duration
+	Watch   bool
+}
+
+// ReviewExitStatus is the stable process status for a completed review.
+type ReviewExitStatus int
+
+const (
+	ReviewSubmitted ReviewExitStatus = 0
+	ReviewTimeout   ReviewExitStatus = 2
+	ReviewCancelled ReviewExitStatus = 3
+	ReviewInternal  ReviewExitStatus = 4
+)
+
+func (s ReviewExitStatus) Code() int { return int(s) }
+
+// ReviewExitError distinguishes a non-submitted review from an ordinary
+// viewer error when callers use Run rather than RunReview.
+type ReviewExitError struct{ Status ReviewExitStatus }
+
+func (e *ReviewExitError) Error() string { return fmt.Sprintf("review ended with status %d", e.Status) }
+
 // Config holds the application configuration.
 type Config struct {
+	Mode         Mode
 	MarkdownPath string
 	Addr         string // bind address, e.g. "127.0.0.1:0"
 	NoOpen       bool   // do not open browser
@@ -35,6 +79,10 @@ type Config struct {
 	WriteFixes   fixer.WriteMode
 	BackupDir    string // directory for backup files when WriteFixes is backup
 	LLM          llm.Settings
+	Review       ReviewConfig
+	Input        io.Reader
+	Output       io.Writer
+	Context      context.Context
 }
 
 // App orchestrates rendering, serving, and browser opening.
@@ -49,6 +97,10 @@ type App struct {
 	provider   llm.Provider
 	llmMode    llm.Mode
 	llmTimeout time.Duration
+
+	reviewMu     sync.RWMutex
+	review       *session.Session
+	reviewServer *server.Server
 }
 
 // New creates a new App with the given configuration. LLM provider
@@ -122,12 +174,215 @@ func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.Docu
 	return res.Snapshot, res.Diagnostics
 }
 
-// Run executes the main application flow: export or serve + live reload.
+// Run executes the configured application flow.
 func (a *App) Run() error {
+	if a.cfg.Mode == ModeReview {
+		status, err := a.RunReview()
+		if err != nil {
+			return err
+		}
+		if status != ReviewSubmitted {
+			return &ReviewExitError{Status: status}
+		}
+		return nil
+	}
+	return a.RunViewer()
+}
+
+// RunViewer executes the ordinary export or live-viewer flow.
+func (a *App) RunViewer() error {
 	if a.cfg.Export != "" {
 		return a.exportStandalone()
 	}
 	return a.serve()
+}
+
+// ReviewSession returns the active review session, if one is running.
+func (a *App) ReviewSession() *session.Session {
+	a.reviewMu.RLock()
+	defer a.reviewMu.RUnlock()
+	return a.review
+}
+
+// ReviewURL returns the active review server URL, or empty before setup.
+func (a *App) ReviewURL() string {
+	a.reviewMu.RLock()
+	defer a.reviewMu.RUnlock()
+	if a.reviewServer == nil {
+		return ""
+	}
+	return a.reviewServer.URL()
+}
+
+// RunReview starts a frozen review session and blocks until submission,
+// timeout, or cancellation. It emits one payload for non-internal outcomes.
+func (a *App) RunReview() (ReviewExitStatus, error) {
+	src, snapshot, err := a.readReviewSnapshot()
+	if err != nil {
+		return ReviewInternal, fmt.Errorf("render review: %w", err)
+	}
+	id, err := newReviewID()
+	if err != nil {
+		return ReviewInternal, fmt.Errorf("create review session: %w", err)
+	}
+	title := a.cfg.Review.Title
+	if title == "" {
+		title = a.cfg.MarkdownPath
+	}
+	review, err := session.New(id, title, a.cfg.Review.Prompt, a.cfg.Review.Choices, src, snapshot)
+	if err != nil {
+		return ReviewInternal, fmt.Errorf("create review session: %w", err)
+	}
+	srv, err := server.New(a.cfg.Addr, a.assets, server.PageData{
+		Title:   title,
+		Content: template.HTML(snapshot.HTML),
+	}, server.WithKatexFS(web.KatexFS()), server.WithSession(review))
+	if err != nil {
+		return ReviewInternal, fmt.Errorf("create review server: %w", err)
+	}
+	a.reviewMu.Lock()
+	a.review = review
+	a.reviewServer = srv
+	a.reviewMu.Unlock()
+	defer func() {
+		_ = srv.Close()
+		a.reviewMu.Lock()
+		a.reviewServer = nil
+		a.reviewMu.Unlock()
+	}()
+	srv.Start()
+	log.Printf("reviewing %s at %s", a.cfg.MarkdownPath, srv.URL())
+
+	ctx := a.cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// The default is frozen. Stdin is never passed to watcher.New.
+	if a.cfg.Review.Watch && a.cfg.MarkdownPath != "-" {
+		fileWatcher, watchErr := watcher.New(a.cfg.MarkdownPath, a.cfg.Debounce)
+		if watchErr != nil {
+			return ReviewInternal, fmt.Errorf("watch markdown file: %w", watchErr)
+		}
+		defer fileWatcher.Close()
+		changes, watchErrs := fileWatcher.Watch(ctx)
+		go a.reloadLoop(ctx, srv, changes, watchErrs, snapshot)
+	}
+	if !a.cfg.NoOpen {
+		if err := browser.Open(srv.URL()); err != nil {
+			log.Printf("warning: could not open browser: %v", err)
+		}
+	}
+
+	var timer <-chan time.Time
+	var timerStop func()
+	if a.cfg.Review.Timeout > 0 {
+		t := time.NewTimer(a.cfg.Review.Timeout)
+		timer = t.C
+		timerStop = func() { t.Stop() }
+	}
+	if timerStop != nil {
+		defer timerStop()
+	}
+	status := ReviewSubmitted
+	select {
+	case <-review.Done():
+	case <-timer:
+		if err := review.Timeout(); err != nil {
+			return ReviewInternal, fmt.Errorf("timeout review: %w", err)
+		}
+		status = ReviewTimeout
+	case <-ctx.Done():
+		if err := review.Cancel(); err != nil {
+			return ReviewInternal, fmt.Errorf("cancel review: %w", err)
+		}
+		status = ReviewCancelled
+	}
+	switch review.CurrentState() {
+	case session.Submitted:
+		status = ReviewSubmitted
+	case session.Timeout:
+		status = ReviewTimeout
+	case session.Cancelled:
+		status = ReviewCancelled
+	}
+	if err := a.writeReviewFeedback(review); err != nil {
+		return ReviewInternal, err
+	}
+	return status, nil
+}
+
+func (a *App) writeReviewFeedback(review *session.Session) error {
+	metadata := review.Metadata()
+	duration := metadata.SubmittedAt.Sub(metadata.OpenedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	payload := feedback.Payload{
+		Version: feedback.CurrentVersion, SessionID: metadata.ID,
+		Title: metadata.Title, Prompt: metadata.Prompt,
+		Verdict: metadata.Verdict, Summary: metadata.Summary, Comments: []any{},
+		Timing: feedback.Timing{OpenedAt: metadata.OpenedAt, SubmittedAt: metadata.SubmittedAt, DurationMS: duration},
+	}
+	format := a.cfg.Review.Format
+	if format == "" {
+		format = feedback.FormatJSON
+	}
+	data, err := feedback.Render(payload, string(format))
+	if err != nil {
+		return fmt.Errorf("render review feedback: %w", err)
+	}
+	if a.cfg.Review.Output != "" && a.cfg.Review.Output != "-" {
+		file, err := os.Create(a.cfg.Review.Output)
+		if err != nil {
+			return fmt.Errorf("create feedback output %s: %w", a.cfg.Review.Output, err)
+		}
+		defer file.Close()
+		if _, err := io.WriteString(file, data); err != nil {
+			return fmt.Errorf("write feedback output %s: %w", a.cfg.Review.Output, err)
+		}
+		return nil
+	}
+	output := a.cfg.Output
+	if output == nil {
+		output = os.Stdout
+	}
+	if _, err := io.WriteString(output, data); err != nil {
+		return fmt.Errorf("write review feedback: %w", err)
+	}
+	return nil
+}
+
+func (a *App) readReviewSnapshot() ([]byte, document.DocumentSnapshot, error) {
+	var data []byte
+	var err error
+	if a.cfg.MarkdownPath == "-" {
+		input := a.cfg.Input
+		if input == nil {
+			input = os.Stdin
+		}
+		data, err = io.ReadAll(input)
+	} else {
+		data, err = os.ReadFile(a.cfg.MarkdownPath)
+	}
+	if err != nil {
+		return nil, document.DocumentSnapshot{}, fmt.Errorf("read %s: %w", a.cfg.MarkdownPath, err)
+	}
+	snapshot, err := document.BuildSnapshot(a.md, data, document.DocumentSnapshot{})
+	if err != nil {
+		return nil, document.DocumentSnapshot{}, err
+	}
+	return data, snapshot, nil
+}
+
+func newReviewID() (string, error) {
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("s-%d-%s", time.Now().UTC().UnixNano(), hex.EncodeToString(random[:])), nil
 }
 
 // exportStandalone renders the Markdown file to a self-contained HTML document

@@ -19,10 +19,14 @@ func main() {
 	assets, err := web.LoadAssets()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load assets: %v\n", err)
+		if cfg.Mode == cli.ModeReview {
+			os.Exit(app.ReviewInternal.Code())
+		}
 		os.Exit(1)
 	}
 
 	application := app.New(app.Config{
+		Mode:         app.Mode(cfg.Mode),
 		MarkdownPath: cfg.MarkdownPath,
 		Addr:         cfg.Addr,
 		NoOpen:       cfg.NoOpen,
@@ -32,9 +36,23 @@ func main() {
 		WriteFixes:   cfg.WriteFixes,
 		BackupDir:    cfg.BackupDir,
 		LLM:          cfg.LLM,
+		Review: app.ReviewConfig{
+			Title: cfg.Review.Title, Prompt: cfg.Review.Prompt, Choices: cfg.Review.Choices,
+			Format: cfg.Review.Format, Output: cfg.Review.Output, Timeout: cfg.Review.Timeout, Watch: cfg.Review.Watch,
+		},
+		Input: os.Stdin, Output: os.Stdout,
 	}, assets)
 
-	if err := application.Run(); err != nil {
+	if cfg.Mode == cli.ModeReview {
+		status, err := application.RunReview()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(app.ReviewInternal.Code())
+		}
+		os.Exit(status.Code())
+	}
+
+	if err := application.RunViewer(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
