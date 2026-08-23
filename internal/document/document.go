@@ -734,11 +734,12 @@ func lcsMatches(oldBlocks, newBlocks []Block) []diffMatch {
 
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
-			if sameBlock(oldBlocks[i], newBlocks[j]) {
+			switch {
+			case sameBlock(oldBlocks[i], newBlocks[j]):
 				dp[i][j] = dp[i+1][j+1] + 1
-			} else if dp[i+1][j] >= dp[i][j+1] {
+			case dp[i+1][j] >= dp[i][j+1]:
 				dp[i][j] = dp[i+1][j]
-			} else {
+			default:
 				dp[i][j] = dp[i][j+1]
 			}
 		}
@@ -752,9 +753,10 @@ func lcsMatches(oldBlocks, newBlocks []Block) []diffMatch {
 			j++
 			continue
 		}
-		if dp[i+1][j] >= dp[i][j+1] {
+		switch {
+		case dp[i+1][j] >= dp[i][j+1]:
 			i++
-		} else {
+		default:
 			j++
 		}
 	}

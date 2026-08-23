@@ -55,7 +55,7 @@ type RepairRequest struct {
 // currentSource is the live source at apply time; if the candidate span no
 // longer matches it (the document was edited during the call), the result is
 // marked stale ([CodeStale]).
-func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []byte) (LLMCandidate, error) {
+func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []byte) (LLMCandidate, error) { //nolint:nilerr // provider failures are normal results
 	cand := LLMCandidate{ProviderName: "none", SourceSpan: req.Span, CreatedAt: time.Now()}
 	if p == nil {
 		return cand, ErrNoProvider
@@ -88,6 +88,7 @@ func Repair(ctx context.Context, p Provider, req RepairRequest, currentSource []
 		Metadata:     req.Metadata,
 	})
 	if err != nil {
+		// Provider failures are normal repair outcomes, not caller errors.
 		cand.Diagnostics = []Diagnostic{classifyProviderErr(err)}
 		return cand, nil
 	}

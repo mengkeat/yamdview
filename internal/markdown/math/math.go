@@ -114,7 +114,7 @@ func (p *inlineMathParser) Parse(parent gast.Node, block text.Reader, pc parser.
 	return nil
 }
 
-func (p *inlineMathParser) parseDollar(parent gast.Node, block text.Reader, pc parser.Context, line []byte, segment text.Segment) gast.Node {
+func (p *inlineMathParser) parseDollar(_ gast.Node, block text.Reader, _ parser.Context, line []byte, segment text.Segment) gast.Node {
 	// Reject $$ (display math) — handled by block parser.
 	if len(line) > 1 && line[1] == '$' {
 		return nil
@@ -154,7 +154,7 @@ func (p *inlineMathParser) parseDollar(parent gast.Node, block text.Reader, pc p
 	return node
 }
 
-func (p *inlineMathParser) parseBackslashParen(parent gast.Node, block text.Reader, pc parser.Context, line []byte, segment text.Segment) gast.Node {
+func (p *inlineMathParser) parseBackslashParen(_ gast.Node, block text.Reader, _ parser.Context, line []byte, segment text.Segment) gast.Node {
 	if !bytes.HasPrefix(line, backslashOpenParen) {
 		return nil
 	}

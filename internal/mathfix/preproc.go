@@ -29,7 +29,7 @@ func Preprocess(src []byte) []byte {
 	var fenceInfo string
 	var fenceLines [][]byte
 
-	var paragraph [][]byte // accumulates non-code, non-blank lines
+	paragraph := make([][]byte, 0, len(lines)) // accumulates non-code, non-blank lines
 
 	flush := func() {
 		if len(paragraph) == 0 {

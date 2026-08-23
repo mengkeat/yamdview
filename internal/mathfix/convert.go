@@ -10,9 +10,11 @@ import (
 
 // The authoritative character tables live in the mathchars package, shared
 // with the table repair pipeline so the two cannot drift apart.
-var charMap = mathchars.CharMap
-var superMap = mathchars.SuperMap
-var subMap = mathchars.SubMap
+var (
+	charMap  = mathchars.CharMap
+	superMap = mathchars.SuperMap
+	subMap   = mathchars.SubMap
+)
 
 // ── Conversion logic ────────────────────────────────────
 
@@ -50,8 +52,8 @@ func convertChars(text string) (string, []Diagnostic) {
 
 		// Square root: √ followed by argument.
 		if r == '√' {
-			handled, advance := handleSqrt(runes[i:], &buf, &diags)
-			if handled {
+			advance := handleSqrt(runes[i:], &buf, &diags)
+			if advance > 0 {
 				i += advance
 				continue
 			}
@@ -98,9 +100,9 @@ func collectRun(runes []rune, m map[rune]rune) ([]rune, string) {
 	return run, base.String()
 }
 
-// handleSqrt handles the √ (square root) symbol.
-// Returns (true, advance) if handled, (false, 0) otherwise.
-func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, int) {
+// handleSqrt handles the √ (square root) symbol and returns the number of
+// runes consumed.
+func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) int {
 	if len(runes) < 2 {
 		buf.WriteString("\\sqrt{}")
 		*diags = append(*diags, Diagnostic{
@@ -108,7 +110,7 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 			Code:     "math.sqrt_no_arg",
 			Message:  "square root symbol without argument",
 		})
-		return true, 1
+		return 1
 	}
 
 	next := runes[1]
@@ -133,7 +135,7 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 			buf.WriteString("\\sqrt{")
 			buf.WriteString(argTeX)
 			buf.WriteString("}")
-			return true, j + 1 // skip √ and ( and content and )
+			return j + 1 // skip √ and ( and content and )
 		}
 		// Unmatched parenthesis.
 		buf.WriteString("\\sqrt{}")
@@ -142,7 +144,7 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 			Code:     "math.sqrt_unmatched",
 			Message:  "square root with unmatched parenthesis",
 		})
-		return true, 1
+		return 1
 	}
 
 	// √x or √2 → \sqrt{x} or \sqrt{2}
@@ -150,7 +152,7 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 		buf.WriteString("\\sqrt{")
 		buf.WriteRune(next)
 		buf.WriteString("}")
-		return true, 2
+		return 2
 	}
 
 	// √ followed by something complex or a space — just emit \sqrt{}.
@@ -160,7 +162,7 @@ func handleSqrt(runes []rune, buf *strings.Builder, diags *[]Diagnostic) (bool, 
 		Code:     "math.sqrt_no_arg",
 		Message:  "square root symbol without clear argument",
 	})
-	return true, 1
+	return 1
 }
 
 func isAlphaOrDigit(r rune) bool {

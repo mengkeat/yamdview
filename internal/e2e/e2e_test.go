@@ -44,22 +44,6 @@ type driverConfig struct {
 	MinBlocks      int    `json:"minBlocks"`
 }
 
-type readyMessage struct {
-	Phase        string  `json:"phase"`
-	RefID        string  `json:"refId"`
-	TopBefore    float64 `json:"topBefore"`
-	BlocksBefore int     `json:"blocksBefore"`
-}
-
-type doneMessage struct {
-	Phase           string   `json:"phase"`
-	TopAfter        *float64 `json:"topAfter"`
-	SentinelKept    bool     `json:"sentinelKept"`
-	BlocksAfter     int      `json:"blocksAfter"`
-	ConsoleWarnings []string `json:"consoleWarnings"`
-	Message         string   `json:"message"`
-}
-
 func skipUnlessEnabled(t *testing.T) {
 	t.Helper()
 	if os.Getenv(envEnabled) != "1" {
@@ -81,7 +65,8 @@ func findBrowser(t *testing.T) (string, bool) {
 
 	if home, err := os.UserHomeDir(); err == nil {
 		matches, _ := filepath.Glob(filepath.Join(
-			home, ".cache", "ms-playwright", "chromium-*", "chrome-linux*", "chrome"))
+			home, ".cache", "ms-playwright", "chromium-*", "chrome-linux*", "chrome",
+		))
 		sort.Strings(matches)
 		if len(matches) > 0 {
 			return matches[len(matches)-1], true
@@ -112,7 +97,8 @@ func findNode(t *testing.T) (string, bool) {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		matches, _ := filepath.Glob(filepath.Join(
-			home, ".nvm", "versions", "node", "*", "bin", "node"))
+			home, ".nvm", "versions", "node", "*", "bin", "node",
+		))
 		sort.Strings(matches)
 		if len(matches) > 0 {
 			return matches[len(matches)-1], true
@@ -177,7 +163,7 @@ func withPrepended(src []byte) []byte {
 func startDriver(t *testing.T, nodePath, nodeModules, cfgPath string) (io.WriteCloser, <-chan map[string]any, func()) {
 	t.Helper()
 
-	driverPath := filepath.Join("driver.js")
+	driverPath := "driver.js"
 	cmd := exec.Command(nodePath, driverPath, cfgPath)
 	cmd.Env = append(os.Environ(), "NODE_PATH="+nodeModules)
 
@@ -216,7 +202,7 @@ func startDriver(t *testing.T, nodePath, nodeModules, cfgPath string) (io.WriteC
 		case <-exited:
 		case <-time.After(10 * time.Second):
 			if cmd.Process != nil {
-				cmd.Process.Kill()
+				_ = cmd.Process.Kill()
 			}
 			<-exited
 		}

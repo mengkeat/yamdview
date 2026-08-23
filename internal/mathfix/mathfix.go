@@ -218,7 +218,7 @@ func findMathSpans(text string, codeRanges []codeRange) []mathSpan {
 	//     (e.g. "dx" in "∫₀¹ x² dx" where the 'd' is directly reachable)
 	//   - through a space: allow only single letters (word length 1)
 	//     to avoid pulling in English words like "to", "of", "in".
-	var rawSpans []mathSpan
+	rawSpans := make([]mathSpan, 0, len(seeds))
 
 	for _, seed := range seeds {
 		s := seed

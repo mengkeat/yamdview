@@ -634,10 +634,7 @@ func looksLikeMathAbsoluteValue(content string) bool {
 				break
 			}
 		}
-		if !hasStrongMath {
-			return false
-		}
-		return true
+		return hasStrongMath
 	}
 
 	// Single lowercase letter commonly used as a math variable: |x|, |v|, |n|.

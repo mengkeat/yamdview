@@ -63,7 +63,8 @@ func IsTableOnly(src []byte) bool {
 		case gast.KindTable:
 			hasTable = true
 		case coreast.KindParagraph:
-			if strings.TrimSpace(string(c.Text(src))) == "" {
+			paragraph := c.(*coreast.Paragraph)
+			if strings.TrimSpace(string(paragraph.Lines().Value(src))) == "" {
 				continue
 			}
 			return false
@@ -81,7 +82,8 @@ func TableCellTexts(src []byte) []string {
 	var texts []string
 	walkTable(src, func(n coreast.Node, entering bool) coreast.WalkStatus {
 		if entering && n.Kind() == gast.KindTableCell {
-			texts = append(texts, strings.TrimSpace(string(n.Text(src))))
+			cell := n.(*gast.TableCell)
+			texts = append(texts, strings.TrimSpace(string(cell.Lines().Value(src))))
 		}
 		return coreast.WalkContinue
 	})
