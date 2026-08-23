@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/feedback"
 	"github.com/mengkeat/yamdview/web"
 )
@@ -99,6 +100,150 @@ func TestReviewStdinSubmitEmitsFrozenPayload(t *testing.T) {
 	}
 	if payload.SessionID == "" || payload.Verdict != "approve" || payload.Summary != "Looks good" {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+}
+
+func TestReviewWatchReanchorsAnnotationsInFeedback(t *testing.T) {
+	initial := "# Review\n\nThe quote is here.\n\nDelete this sentence.\n"
+	dir := t.TempDir()
+	source := filepath.Join(dir, "doc.md")
+	if err := os.WriteFile(source, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var output bytes.Buffer
+	application := New(Config{
+		Mode: ModeReview, MarkdownPath: source, Addr: "127.0.0.1:0", NoOpen: true,
+		Debounce: 10 * time.Millisecond, Output: &output, Context: ctx,
+		Review: ReviewConfig{Watch: true, Format: feedback.FormatJSON},
+	}, testAssets)
+	result := make(chan struct {
+		status ReviewExitStatus
+		err    error
+	}, 1)
+	go func() {
+		status, err := application.RunReview()
+		result <- struct {
+			status ReviewExitStatus
+			err    error
+		}{status, err}
+	}()
+
+	url := waitReviewURL(t, application)
+	review := application.ReviewSession()
+	if review == nil {
+		t.Fatal("review session did not start")
+	}
+	var movedBlockID, deletedBlockID string
+	for _, block := range review.Snapshot.Blocks {
+		switch {
+		case strings.Contains(block.Source, "The quote is here."):
+			movedBlockID = block.ID
+		case strings.Contains(block.Source, "Delete this sentence."):
+			deletedBlockID = block.ID
+		}
+	}
+	if movedBlockID == "" || deletedBlockID == "" {
+		t.Fatalf("could not find annotation blocks in snapshot: %#v", review.Snapshot.Blocks)
+	}
+
+	create := func(blockID, quote string) annotation.Annotation {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{
+			"kind": "comment", "block_id": blockID, "quote": quote, "comment": "note",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodPost, url+"api/session/annotations", strings.NewReader(string(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-Yamdview-Token", review.Token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			data, _ := io.ReadAll(resp.Body)
+			t.Fatalf("annotation create status = %d: %s", resp.StatusCode, data)
+		}
+		var created annotation.Annotation
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		return created
+	}
+	moved := create(movedBlockID, "The quote is here.")
+	deleted := create(deletedBlockID, "Delete this sentence.")
+
+	if err := os.WriteFile(source, []byte("# Review\n\nPrefix changed: The quote is here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	ready := false
+	for time.Now().Before(deadline) {
+		var currentMoved, currentDeleted annotation.Annotation
+		for _, item := range review.AnnotationSnapshot() {
+			switch item.Quote {
+			case moved.Quote:
+				currentMoved = item
+			case deleted.Quote:
+				currentDeleted = item
+			}
+		}
+		if currentMoved.Status == annotation.StatusActive && currentMoved.BlockID != moved.BlockID && currentMoved.SourceSpan != nil &&
+			currentDeleted.Status == annotation.StatusOutdated && currentDeleted.SourceSpan == nil {
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("annotations were not re-anchored before submission: %#v", review.AnnotationSnapshot())
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url+"api/session/submit", strings.NewReader(`{"verdict":"approve","summary":"Reviewed"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Yamdview-Token", review.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("submit status = %d", resp.StatusCode)
+	}
+
+	outcome := <-result
+	if outcome.err != nil || outcome.status != ReviewSubmitted {
+		t.Fatalf("review outcome = %d, %v", outcome.status, outcome.err)
+	}
+	payload, err := feedback.DecodeJSON(output.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Comments) != 2 {
+		t.Fatalf("feedback comments = %#v", payload.Comments)
+	}
+	for _, comment := range payload.Comments {
+		switch comment.Quote {
+		case moved.Quote:
+			if comment.Status != annotation.StatusActive || comment.BlockID == moved.BlockID {
+				t.Fatalf("moved feedback annotation = %#v", comment)
+			}
+		case deleted.Quote:
+			if comment.Status != annotation.StatusOutdated || comment.SourceSpan != nil {
+				t.Fatalf("outdated feedback annotation = %#v", comment)
+			}
+		default:
+			t.Fatalf("unexpected feedback annotation = %#v", comment)
+		}
 	}
 }
 

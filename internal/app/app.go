@@ -279,7 +279,7 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 		reloadDone = make(chan struct{})
 		go func() {
 			defer close(reloadDone)
-			a.reloadLoop(reviewCtx, srv, changes, watchErrs, snapshot)
+			a.reloadLoopWithReview(reviewCtx, srv, changes, watchErrs, snapshot, review)
 		}()
 	}
 	if !a.cfg.NoOpen {
@@ -544,6 +544,9 @@ func logFixSummary(path string, tableCount, mathCount int, patches []fixer.Sourc
 }
 
 func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot) {
+	a.reloadLoopWithReview(ctx, srv, changes, watchErrs, current, nil)
+}
+func (a *App) reloadLoopWithReview(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot, review *session.Session) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -573,6 +576,15 @@ func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan
 
 			diff := document.Diff(current, next)
 			content := template.HTML(diff.Snapshot.HTML)
+			if review != nil {
+				if err := review.UpdateSnapshot(src, diff.Snapshot); err != nil {
+					if errors.Is(err, session.ErrTerminalSessionMutation) {
+						return
+					}
+					log.Printf("warning: could not update review snapshot: %v", err)
+					continue
+				}
+			}
 			if diff.Reset {
 				if err := srv.BroadcastReset(content); err != nil {
 					log.Printf("warning: could not broadcast reset: %v", err)
