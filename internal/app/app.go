@@ -546,6 +546,7 @@ func logFixSummary(path string, tableCount, mathCount int, patches []fixer.Sourc
 func (a *App) reloadLoop(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot) {
 	a.reloadLoopWithReview(ctx, srv, changes, watchErrs, current, nil)
 }
+
 func (a *App) reloadLoopWithReview(ctx context.Context, srv *server.Server, changes <-chan watcher.Event, watchErrs <-chan error, current document.DocumentSnapshot, review *session.Session) {
 	for {
 		select {

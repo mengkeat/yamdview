@@ -180,14 +180,22 @@ func TestRenderJSONAnnotationsGoldenAndRoundTrip(t *testing.T) {
 			SourceSpan: &annotation.SourceSpan{StartByte: 1180, EndByte: 1193, Text: "secret source"},
 			Comment:    "Please keep this wording.", CreatedAt: createdAt, Status: annotation.StatusActive,
 		},
-		{ID: "a-suggestion", Kind: annotation.KindSuggestion, BlockID: "block-2", StartLine: 20, EndLine: 20,
-			Quote: "invalidate every key", Comment: "This is too broad.", SuggestedReplacement: "invalidate affected keys", CreatedAt: createdAt, Status: annotation.StatusActive},
-		{ID: "a-question", Kind: annotation.KindQuestion, BlockID: "block-3", StartLine: 30, EndLine: 31,
-			Quote: "why this dependency?", Comment: "Can we avoid it?", CreatedAt: createdAt, Status: annotation.StatusActive},
-		{ID: "a-concern", Kind: annotation.KindConcern, BlockID: "block-4", StartLine: 40, EndLine: 40,
-			Quote: "uncached request", Comment: "This may be expensive.", CreatedAt: createdAt, Status: annotation.StatusActive},
-		{ID: "a-approval", Kind: annotation.KindApproval, BlockID: "block-5", StartLine: 50, EndLine: 52,
-			Quote: "safe migration", CreatedAt: createdAt, Status: annotation.StatusActive},
+		{
+			ID: "a-suggestion", Kind: annotation.KindSuggestion, BlockID: "block-2", StartLine: 20, EndLine: 20,
+			Quote: "invalidate every key", Comment: "This is too broad.", SuggestedReplacement: "invalidate affected keys", CreatedAt: createdAt, Status: annotation.StatusActive,
+		},
+		{
+			ID: "a-question", Kind: annotation.KindQuestion, BlockID: "block-3", StartLine: 30, EndLine: 31,
+			Quote: "why this dependency?", Comment: "Can we avoid it?", CreatedAt: createdAt, Status: annotation.StatusActive,
+		},
+		{
+			ID: "a-concern", Kind: annotation.KindConcern, BlockID: "block-4", StartLine: 40, EndLine: 40,
+			Quote: "uncached request", Comment: "This may be expensive.", CreatedAt: createdAt, Status: annotation.StatusActive,
+		},
+		{
+			ID: "a-approval", Kind: annotation.KindApproval, BlockID: "block-5", StartLine: 50, EndLine: 52,
+			Quote: "safe migration", CreatedAt: createdAt, Status: annotation.StatusActive,
+		},
 	}
 
 	got, err := feedback.RenderJSON(payload)
@@ -298,11 +306,15 @@ func TestRenderJSONAnnotationsGoldenAndRoundTrip(t *testing.T) {
 func TestRenderMarkdownCommentsGolden(t *testing.T) {
 	payload := testPayload()
 	payload.Comments = []annotation.Annotation{
-		{Kind: annotation.KindSuggestion, BlockID: "block-1", StartLine: 42, EndLine: 44,
+		{
+			Kind: annotation.KindSuggestion, BlockID: "block-1", StartLine: 42, EndLine: 44,
 			Quote: "invalidate the cache on every write", Comment: "Too aggressive - invalidate only the affected keys.",
-			SuggestedReplacement: "invalidate only the affected cache keys on write", Status: annotation.StatusActive},
-		{Kind: annotation.KindConcern, BlockID: "block-2", StartLine: 8, EndLine: 8,
-			Quote: "uncached request", Comment: "This is now outdated.", Status: annotation.StatusOutdated},
+			SuggestedReplacement: "invalidate only the affected cache keys on write", Status: annotation.StatusActive,
+		},
+		{
+			Kind: annotation.KindConcern, BlockID: "block-2", StartLine: 8, EndLine: 8,
+			Quote: "uncached request", Comment: "This is now outdated.", Status: annotation.StatusOutdated,
+		},
 	}
 
 	got, err := feedback.RenderMarkdown(payload)
