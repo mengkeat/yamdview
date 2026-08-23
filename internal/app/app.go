@@ -339,7 +339,7 @@ func (a *App) writeReviewFeedback(review *session.Session) error {
 	payload := feedback.Payload{
 		Version: feedback.CurrentVersion, SessionID: metadata.ID,
 		Title: metadata.Title, Prompt: metadata.Prompt,
-		Verdict: metadata.Verdict, Summary: metadata.Summary, Comments: []any{},
+		Verdict: metadata.Verdict, Summary: metadata.Summary, Comments: review.AnnotationSnapshot(),
 		Timing: feedback.Timing{OpenedAt: metadata.OpenedAt, SubmittedAt: metadata.SubmittedAt, DurationMS: duration},
 	}
 	format := a.cfg.Review.Format

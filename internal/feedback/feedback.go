@@ -9,6 +9,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/mengkeat/yamdview/internal/annotation"
 )
 
 // CurrentVersion is the version of the feedback payload emitted by this
@@ -31,18 +33,15 @@ type Timing struct {
 }
 
 // Payload is the versioned review feedback contract.
-//
-// Comments is reserved for the annotation schema introduced in Phase 12. It
-// is emitted as an empty array in Phase 11 and non-empty values are rejected.
 type Payload struct {
-	Version   int    `json:"yamdview_feedback_version"`
-	SessionID string `json:"session_id"`
-	Title     string `json:"title"`
-	Prompt    string `json:"prompt"`
-	Verdict   string `json:"verdict"`
-	Summary   string `json:"summary"`
-	Comments  []any  `json:"comments"`
-	Timing    Timing `json:"timing"`
+	Version   int                     `json:"yamdview_feedback_version"`
+	SessionID string                  `json:"session_id"`
+	Title     string                  `json:"title"`
+	Prompt    string                  `json:"prompt"`
+	Verdict   string                  `json:"verdict"`
+	Summary   string                  `json:"summary"`
+	Comments  []annotation.Annotation `json:"comments"`
+	Timing    Timing                  `json:"timing"`
 }
 
 // Feedback and ReviewFeedback are descriptive aliases for Payload.
@@ -56,8 +55,10 @@ func (p Payload) Validate() error {
 	if p.Version != CurrentVersion {
 		return fmt.Errorf("unsupported feedback version %d (want %d)", p.Version, CurrentVersion)
 	}
-	if len(p.Comments) != 0 {
-		return errors.New("feedback comments are not supported yet")
+	for i, comment := range p.Comments {
+		if err := comment.Validate(); err != nil {
+			return fmt.Errorf("invalid feedback comment %d: %w", i, err)
+		}
 	}
 	return nil
 }
@@ -87,9 +88,11 @@ func RenderJSON(payload Payload) (string, error) {
 		return "", err
 	}
 
-	// Keep the empty Phase 11 comments collection stable even when callers use
-	// the zero value for the slice.
-	payload.Comments = []any{}
+	// Keep the empty comments collection stable even when callers use the zero
+	// value for the slice.
+	if payload.Comments == nil {
+		payload.Comments = []annotation.Annotation{}
+	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal feedback JSON: %w", err)
@@ -98,8 +101,7 @@ func RenderJSON(payload Payload) (string, error) {
 }
 
 // RenderMarkdown returns the deterministic prose representation described by
-// the feedback output contract. Annotation comments are intentionally not
-// rendered until Phase 12.
+// the feedback output contract.
 func RenderMarkdown(payload Payload) (string, error) {
 	if err := payload.Validate(); err != nil {
 		return "", err
@@ -119,7 +121,46 @@ func RenderMarkdown(payload Payload) (string, error) {
 	if payload.Summary != "" {
 		lines = append(lines, payload.Summary, "")
 	}
+	if len(payload.Comments) > 0 {
+		lines = append(lines, "### Comments", "")
+		for i, comment := range payload.Comments {
+			itemHeading := fmt.Sprintf("%d. **%s** (lines %d-%d)", i+1, titleKind(comment.Kind), comment.StartLine, comment.EndLine)
+			if comment.Status == annotation.StatusOutdated {
+				itemHeading += " **(outdated)**"
+			}
+			itemHeading += ":"
+			lines = append(lines, itemHeading)
+			for _, quoteLine := range strings.Split(comment.Quote, "\n") {
+				lines = append(lines, "   > "+quoteLine)
+			}
+			if comment.Comment != "" || comment.SuggestedReplacement != "" {
+				lines = append(lines, "")
+			}
+			if comment.Comment != "" {
+				lines = append(lines, indentComment(comment.Comment)...)
+			}
+			if comment.SuggestedReplacement != "" {
+				lines = append(lines, "   Suggested replacement: `"+comment.SuggestedReplacement+"`")
+			}
+			lines = append(lines, "")
+		}
+	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func titleKind(kind annotation.Kind) string {
+	if kind == "" {
+		return ""
+	}
+	return strings.ToUpper(string(kind[:1])) + string(kind[1:])
+}
+
+func indentComment(comment string) []string {
+	lines := strings.Split(comment, "\n")
+	for i := range lines {
+		lines[i] = "   " + lines[i]
+	}
+	return lines
 }
 
 // Render renders payload using a supported output format.
@@ -161,7 +202,7 @@ func DecodeJSON(data []byte) (Payload, error) {
 		return Payload{}, err
 	}
 	if payload.Comments == nil {
-		payload.Comments = []any{}
+		payload.Comments = []annotation.Annotation{}
 	}
 	return payload, nil
 }
