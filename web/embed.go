@@ -8,7 +8,7 @@ import (
 	"github.com/mengkeat/yamdview/internal/server"
 )
 
-//go:embed index.html viewer.css viewer.js
+//go:embed index.html viewer.css viewer.js annotator.js
 var content embed.FS
 
 //go:embed assets/katex/katex.min.css assets/katex/katex.min.js assets/katex/VERSION assets/katex/fonts/*.woff2
@@ -28,11 +28,16 @@ func LoadAssets() (server.Assets, error) {
 	if err != nil {
 		return server.Assets{}, err
 	}
+	annotatorJS, err := content.ReadFile("annotator.js")
+	if err != nil {
+		return server.Assets{}, err
+	}
 
 	return server.Assets{
-		IndexHTML: string(indexHTML),
-		ViewerCSS: string(viewerCSS),
-		ViewerJS:  string(viewerJS),
+		IndexHTML:   string(indexHTML),
+		ViewerCSS:   string(viewerCSS),
+		ViewerJS:    string(viewerJS),
+		AnnotatorJS: string(annotatorJS),
 	}, nil
 }
 

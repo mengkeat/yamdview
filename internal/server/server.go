@@ -63,11 +63,12 @@ func exportViewMeasure(v ExportView) string {
 
 // PageData holds the data injected into the HTML template.
 type PageData struct {
-	Title   string
-	Content template.HTML
-	CSS     template.CSS
-	JS      template.JS
-	Review  *ReviewPageData
+	Title       string
+	Content     template.HTML
+	CSS         template.CSS
+	JS          template.JS
+	AnnotatorJS template.JS
+	Review      *ReviewPageData
 }
 
 // ReviewPageData is the small amount of review state rendered into a review
@@ -83,9 +84,10 @@ type ReviewPageData struct {
 
 // Assets provides the embedded web assets (template, CSS, JS).
 type Assets struct {
-	IndexHTML string
-	ViewerCSS string
-	ViewerJS  string
+	IndexHTML   string
+	ViewerCSS   string
+	ViewerJS    string
+	AnnotatorJS string
 }
 
 // ensureAssets fills empty CSS/JS fields from the provided assets.
@@ -95,6 +97,9 @@ func (pd *PageData) ensureAssets(assets Assets) {
 	}
 	if pd.JS == "" {
 		pd.JS = template.JS(assets.ViewerJS)
+	}
+	if pd.AnnotatorJS == "" {
+		pd.AnnotatorJS = template.JS(assets.AnnotatorJS)
 	}
 }
 

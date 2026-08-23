@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -319,6 +320,10 @@ func (b Block) WrappedHTML() string {
 	out.WriteString(html.EscapeString(b.ID))
 	out.WriteString(`" data-kind="`)
 	out.WriteString(html.EscapeString(string(b.Kind)))
+	out.WriteString(`" data-start-line="`)
+	out.WriteString(strconv.Itoa(b.StartLine))
+	out.WriteString(`" data-end-line="`)
+	out.WriteString(strconv.Itoa(b.EndLine))
 	out.WriteString(`">`)
 	if b.HTML != "" && !strings.HasPrefix(b.HTML, "\n") {
 		out.WriteByte('\n')

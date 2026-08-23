@@ -637,3 +637,57 @@ hr {
 }
 
 .review-session__status[data-state="error"] { color: var(--accent); }
+
+/* ── Review annotations ───────────────────────────────── */
+.review-annotator-sidebar {
+  position: fixed;
+  z-index: 30;
+  top: 1rem;
+  right: 1rem;
+  width: min(20rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper-warm) 94%, transparent);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(12px);
+}
+.review-annotator-sidebar__header { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; margin-bottom: .75rem; }
+.review-annotator-sidebar__title { margin: 0; font: 600 .78rem var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.review-annotator-sidebar__count { color: var(--ink-faint); font: .7rem var(--font-mono); }
+.review-annotator-sidebar__empty { color: var(--ink-soft); font-size: .85rem; }
+.review-annotator-item { padding: .7rem 0; border-top: 1px solid var(--rule); }
+.review-annotator-item:first-child { border-top: 0; }
+.review-annotator-item__meta { display: flex; justify-content: space-between; gap: .5rem; color: var(--accent); font: .65rem var(--font-mono); text-transform: uppercase; letter-spacing: .05em; }
+.review-annotator-item__quote { display: block; margin: .3rem 0; color: var(--ink-soft); font-size: .8rem; font-style: italic; }
+.review-annotator-item__comment { margin: 0 0 .4rem; font-size: .88rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-annotator-item__actions { display: flex; gap: .35rem; }
+.review-annotator-item__actions button, .review-annotator-composer button, .review-annotator-add {
+  border: 1px solid var(--accent-soft); border-radius: 999px; padding: .34rem .58rem; color: var(--ink); background: var(--paper); font: .68rem var(--font-mono); cursor: pointer;
+}
+.review-annotator-item__actions button:hover, .review-annotator-composer button:hover, .review-annotator-add:hover { color: var(--paper); background: var(--accent); }
+.review-annotator-add { position: fixed; z-index: 40; display: none; padding: .5rem .75rem; color: var(--paper); background: var(--accent); box-shadow: var(--shadow-md); }
+.review-annotator-add[data-visible="true"] { display: block; }
+.review-annotator-composer { position: fixed; z-index: 35; display: none; width: min(25rem, calc(100vw - 2rem)); padding: 1rem; border: 1px solid var(--accent-soft); border-radius: 10px; color: var(--ink); background: var(--paper-warm); box-shadow: var(--shadow-lg); }
+.review-annotator-composer[data-visible="true"] { display: block; }
+.review-annotator-composer__title { margin: 0 0 .7rem; font: 600 .9rem var(--font-mono); }
+.review-annotator-composer label { display: block; margin: .55rem 0 .2rem; color: var(--ink-soft); font: .7rem var(--font-mono); }
+.review-annotator-composer select, .review-annotator-composer textarea, .review-annotator-composer input { width: 100%; border: 1px solid var(--rule); border-radius: 5px; padding: .5rem .6rem; color: var(--ink); background: var(--paper); font: .9rem var(--font-body); }
+.review-annotator-composer textarea { min-height: 5rem; resize: vertical; }
+.review-annotator-composer__replacement { display: none; }
+.review-annotator-composer__replacement[data-visible="true"] { display: block; }
+.review-annotator-composer__footer { display: flex; align-items: center; gap: .5rem; margin-top: .7rem; }
+.review-annotator-composer__status { flex: 1; margin: 0; color: var(--ink-soft); font-size: .75rem; }
+.review-annotator-composer__status[data-state="error"] { color: var(--accent); }
+.review-annotator-composer__status[data-state="saved"] { color: #477b55; }
+.review-annotator-fallback-mark { position: fixed; z-index: 20; pointer-events: none; border-bottom: 2px solid var(--accent); background: var(--accent-glow); }
+::highlight(yamdview-annotations) { background: color-mix(in srgb, var(--accent-soft) 48%, transparent); color: inherit; }
+@media (max-width: 700px) {
+  .review-annotator-sidebar { top: auto; right: .6rem; bottom: .6rem; left: .6rem; width: auto; max-height: 35vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-annotator-sidebar, .review-annotator-composer { backdrop-filter: none; }
+}
