@@ -521,6 +521,43 @@ func TestClientErrorAcceptsPOST(t *testing.T) {
 	}
 }
 
+func TestClientErrorRejectsTrailingJSON(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Start()
+
+	resp, err := http.Post(srv.URL()+"client-error", "application/json", strings.NewReader("[] []"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for trailing JSON, got %d", resp.StatusCode)
+	}
+}
+
+func TestClientErrorRejectsTooManyEntries(t *testing.T) {
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Test", "<p>Hello</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	srv.Start()
+
+	body := "[" + strings.Repeat(`{"kind":"math"},`, 100) + `{"kind":"math"}]`
+	resp, err := http.Post(srv.URL()+"client-error", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for too many entries, got %d", resp.StatusCode)
+	}
+}
+
 func TestClientErrorHandler(t *testing.T) {
 	var received server.ClientError
 	srv, err := server.New(
