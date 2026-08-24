@@ -29,6 +29,32 @@
 <p id="review-status" class="review-session__status" role="status" aria-live="polite"></p>
 </div>
 </div>
+{{if eq .Review.RespondMode "ask"}}
+<details class="review-reformulate">
+<summary class="review-reformulate__toggle">Reformulate feedback</summary>
+<div class="review-reformulate__run">
+<label class="review-reformulate__label" for="review-reformulate-model">Model</label>
+<select id="review-reformulate-model" class="review-reformulate__model"></select>
+<button type="button" id="review-reformulate-run" class="review-reformulate__run-btn">Draft consolidated instruction</button>
+</div>
+<p id="review-reformulate-status" class="review-reformulate__status" role="status" aria-live="polite"></p>
+<ul id="review-reformulate-diagnostics" class="review-reformulate__diagnostics" hidden></ul>
+<div id="review-reformulate-results" class="review-reformulate__results" hidden>
+<div class="review-reformulate__pane">
+<h2 class="review-reformulate__pane-title">Your raw feedback</h2>
+<pre id="review-reformulate-raw-text" class="review-reformulate__text"></pre>
+</div>
+<div class="review-reformulate__pane">
+<h2 class="review-reformulate__pane-title">Reformulated</h2>
+<pre id="review-reformulated-text" class="review-reformulate__text"></pre>
+</div>
+</div>
+<div id="review-reformulate-choice" class="review-reformulate__choice" role="group" aria-label="Choose what to submit" hidden>
+<button type="button" class="review-reformulate__option" data-use="false" aria-pressed="true">Submit raw</button>
+<button type="button" class="review-reformulate__option" data-use="true" aria-pressed="false">Submit reformulated</button>
+</div>
+</details>
+{{end}}
 </aside>
 {{end}}
 <main id="document">

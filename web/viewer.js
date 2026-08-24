@@ -359,6 +359,14 @@
     var status = document.getElementById("review-status");
     var verdict = "";
 
+    // Reformulation preview state ("ask" mode only). Kept separate from
+    // the plain submission path so it can never block raw feedback.
+    var reformulate = null;
+
+    function currentVerdict() {
+      return verdict;
+    }
+
     function setStatus(message, state) {
       status.textContent = message;
       status.setAttribute("data-state", state || "");
@@ -410,6 +418,155 @@
           setStatus(err.message || "Could not submit review.", "error");
         });
     });
+
+    reformulate = initReformulate(panel, token, currentVerdict, setStatus);
+  }
+
+  /**
+   * Wire the reformulation preview UI. Only active when the page exposes
+   * respond metadata with mode "ask"; returns null otherwise so callers
+   * know the capability is absent.
+   */
+  function initReformulate(panel, token, getVerdict, setStatus) {
+    if ((panel.getAttribute("data-respond-mode") || "") !== "ask") {
+      return null;
+    }
+
+    var run = document.getElementById("review-reformulate-run");
+    var modelSelect = document.getElementById("review-reformulate-model");
+    var statusLine = document.getElementById("review-reformulate-status");
+    var diagnostics = document.getElementById("review-reformulate-diagnostics");
+    var results = document.getElementById("review-reformulate-results");
+    var rawText = document.getElementById("review-reformulate-raw-text");
+    var refText = document.getElementById("review-reformulated-text");
+    var choiceGroup = document.getElementById("review-reformulate-choice");
+    var options = choiceGroup ? choiceGroup.querySelectorAll("[data-use]") : [];
+    var summary = document.getElementById("review-summary");
+    var state = { applied: false, requested: false };
+
+    if (!run || !modelSelect || !results || !choiceGroup) {
+      return null;
+    }
+
+    function setReformulateStatus(message, kind) {
+      statusLine.textContent = message;
+      statusLine.setAttribute("data-state", kind || "");
+    }
+
+    // Populate the model picker from the comma-joined data attribute,
+    // falling back to the single configured model.
+    var preferred = panel.getAttribute("data-respond-model") || "";
+    var modelsAttr = panel.getAttribute("data-respond-models") || "";
+    var models = modelsAttr ? modelsAttr.split(",") : [];
+    if (models.length === 0 && preferred) models = [preferred];
+    modelSelect.textContent = "";
+    for (var i = 0; i < models.length; i++) {
+      var name = models[i].replace(/^\s+/, "").replace(/\s+$/, "");
+      if (!name) continue;
+      var option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      if (name === preferred) option.selected = true;
+      modelSelect.appendChild(option);
+    }
+
+    function selectOption(use) {
+      state.requested = use;
+      for (var j = 0; j < options.length; j++) {
+        var active = (options[j].getAttribute("data-use") === "true") === use;
+        options[j].setAttribute("aria-pressed", active ? "true" : "false");
+      }
+    }
+
+    for (var k = 0; k < options.length; k++) {
+      options[k].addEventListener("click", function () {
+        var use = this.getAttribute("data-use") === "true";
+        if (use && !state.applied) {
+          setReformulateStatus("No reformulated preview yet — run a draft first.", "error");
+          return;
+        }
+        selectOption(use);
+        setReformulateStatus("", "");
+      });
+    }
+
+    function renderDiagnostics(entries) {
+      if (!diagnostics) return;
+      while (diagnostics.firstChild) {
+        diagnostics.removeChild(diagnostics.firstChild);
+      }
+      if (!entries || typeof entries.length !== "number" || entries.length === 0) {
+        diagnostics.hidden = true;
+        return;
+      }
+      for (var m = 0; m < entries.length; m++) {
+        var entry = entries[m] || {};
+        var item = document.createElement("li");
+        item.setAttribute("data-severity", entry.severity || "");
+        item.textContent = entry.message || entry.code || "issue reported";
+        diagnostics.appendChild(item);
+      }
+      diagnostics.hidden = false;
+    }
+
+    function rawFeedbackText() {
+      var parts = [];
+      var chosen = getVerdict();
+      if (chosen) parts.push("Verdict: " + chosen);
+      if (summary.value.replace(/\s+/g, "") !== "") parts.push(summary.value);
+      return parts.join("\n\n") || "(no feedback entered)";
+    }
+
+    run.addEventListener("click", function () {
+      run.disabled = true;
+      setReformulateStatus("Drafting consolidated instruction…", "");
+
+      fetch("/api/session/reformulate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Yamdview-Token": token,
+        },
+        body: JSON.stringify({ summary: summary.value, model: modelSelect.value }),
+      })
+        .then(function (response) {
+          return response.text().then(function (body) {
+            var payload = {};
+            try { payload = body ? JSON.parse(body) : {}; } catch (_) {}
+            if (!response.ok) throw new Error(payload.error || body || "Reformulation failed");
+            return payload;
+          });
+        })
+        .then(function (payload) {
+          var applied = payload.applied === true;
+          state.applied = applied;
+          if (!applied) selectOption(false);
+          rawText.textContent = rawFeedbackText();
+          refText.textContent = applied && payload.reformulated
+            ? payload.reformulated.text
+            : "(reformulation unavailable — raw feedback will be used)";
+          renderDiagnostics(payload.diagnostics);
+          results.hidden = false;
+          choiceGroup.hidden = false;
+          setReformulateStatus(applied ? "Preview ready." : "No reformulation available.", "");
+        })
+        .catch(function (err) {
+          setReformulateStatus(err.message || "Could not draft a reformulation.", "error");
+        })
+        .then(function () {
+          run.disabled = false;
+        });
+    });
+
+    return {
+      /** True only when the user chose the reformulated text AND a preview exists. */
+      shouldUse: function () {
+        return state.requested && state.applied;
+      },
+      hasPreview: function () {
+        return state.applied;
+      },
+    };
   }
 
   // ── Initialisation ─────────────────────────────────────
