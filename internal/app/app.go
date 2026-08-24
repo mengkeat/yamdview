@@ -440,6 +440,9 @@ func (a *App) writeReviewFeedback(review *session.Session) error {
 		Verdict: metadata.Verdict, Summary: metadata.Summary, Comments: review.AnnotationSnapshot(),
 		Timing: feedback.Timing{OpenedAt: metadata.OpenedAt, SubmittedAt: metadata.SubmittedAt, DurationMS: duration},
 	}
+	// Include any stored reformulation (user-approved preview or auto-mode
+	// result); nil keeps the payload free of the reformulated section.
+	payload.Reformulated = review.ReformulatedResult()
 	format := a.cfg.Review.Format
 	if format == "" {
 		format = feedback.FormatJSON
