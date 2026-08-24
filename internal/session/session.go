@@ -14,6 +14,7 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/feedback"
 )
 
 // State is the lifecycle state of a review session.
@@ -85,9 +86,10 @@ type Session struct {
 	OpenedAt    time.Time
 	SubmittedAt time.Time
 
-	mu          sync.RWMutex
-	annotations []annotation.Annotation
-	done        chan struct{}
+	mu           sync.RWMutex
+	annotations  []annotation.Annotation
+	reformulated *feedback.Reformulated
+	done         chan struct{}
 }
 
 // Metadata returns a concurrency-safe copy of the session state suitable for
@@ -177,6 +179,37 @@ func (s *Session) AnnotationsSnapshot() []annotation.Annotation {
 // SnapshotAnnotations is an explicit alias for AnnotationSnapshot.
 func (s *Session) SnapshotAnnotations() []annotation.Annotation {
 	return s.AnnotationSnapshot()
+}
+
+// SetReformulated stores a copy of the LLM-reformulated feedback summary;
+// nil clears any stored result. Unlike annotation mutations this is allowed
+// in every state, including terminal sessions: the application writes the
+// final payload after the session ends, and the server may mark an approval
+// on a stored preview right before Submit resolves. Callers decide whether
+// their own ordering makes sense; storage itself never gates on state.
+func (s *Session) SetReformulated(r *feedback.Reformulated) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reformulated = cloneReformulated(r)
+}
+
+// ReformulatedResult returns a copy of the stored reformulation result, or
+// nil when none exists. Mutating the returned value does not affect what the
+// session holds.
+func (s *Session) ReformulatedResult() *feedback.Reformulated {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneReformulated(s.reformulated)
+}
+
+// cloneReformulated copies the reformulation record. All fields are values,
+// so a shallow copy fully isolates caller and session.
+func cloneReformulated(r *feedback.Reformulated) *feedback.Reformulated {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	return &c
 }
 
 // ListAnnotations returns all annotations in insertion order.

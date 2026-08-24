@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/feedback"
 	"github.com/mengkeat/yamdview/internal/session"
 )
 
@@ -180,4 +181,49 @@ func TestTimeoutAndCancelSemantics(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+func TestReformulatedStorageCopiesAndTerminalState(t *testing.T) {
+	s := newTestSession(t)
+
+	if got := s.ReformulatedResult(); got != nil {
+		t.Fatalf("ReformulatedResult on fresh session = %#v, want nil", got)
+	}
+
+	stored := &feedback.Reformulated{Provider: "mock", Model: "m1", Text: "rewritten"}
+	s.SetReformulated(stored)
+
+	got := s.ReformulatedResult()
+	if got == nil || *got != *stored {
+		t.Fatalf("ReformulatedResult = %#v, want %+v", got, stored)
+	}
+
+	// Mutating the returned copy must not affect what the session holds.
+	got.Text = "tampered"
+	got.ApprovedByUser = true
+	if again := s.ReformulatedResult(); again.Text != "rewritten" || again.ApprovedByUser {
+		t.Fatalf("stored result was mutated via returned copy: %#v", again)
+	}
+
+	// Mutating the value passed to SetReformulated must not leak in either.
+	stored.Model = "changed"
+	if again := s.ReformulatedResult(); again.Model != "m1" {
+		t.Fatalf("session aliased caller's struct: %#v", again)
+	}
+
+	s.SetReformulated(nil)
+	if got := s.ReformulatedResult(); got != nil {
+		t.Fatalf("SetReformulated(nil) did not clear storage: %#v", got)
+	}
+
+	// Storage must survive a terminal transition: the app assembles the final
+	// payload (including approval) after Submit.
+	if err := s.Submit("approve", "fine"); err != nil {
+		t.Fatal(err)
+	}
+	final := &feedback.Reformulated{Provider: "mock", Model: "m1", Text: "final", ApprovedByUser: true}
+	s.SetReformulated(final)
+	if got := s.ReformulatedResult(); got == nil || !got.ApprovedByUser || got.Text != "final" {
+		t.Fatalf("reformulated not stored after terminal state: %#v", got)
+	}
 }
