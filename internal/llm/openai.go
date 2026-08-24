@@ -254,3 +254,13 @@ func mapFinishReason(reason string) FinishReason {
 		return FinishUnknown
 	}
 }
+
+// withModel returns a copy of o with cfg.Model replaced. It lets resolution
+// code apply a per-call model override without mutating shared provider state;
+// the HTTP client is shared and safe for concurrent use.
+func (o *OpenAI) withModel(model string) Provider {
+	cp := *o
+	cp.cfg = o.cfg
+	cp.cfg.Model = model
+	return &cp
+}
