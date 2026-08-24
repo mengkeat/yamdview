@@ -89,6 +89,10 @@ type ReviewPageData struct {
 	RespondModel    string
 	RespondModels   []string
 	RespondMode     string
+
+	// RespondModelsJoined is the comma-joined model list for the HTML
+	// template's data attribute.
+	RespondModelsJoined string
 }
 
 // Assets provides the embedded web assets (template, CSS, JS).
@@ -429,10 +433,11 @@ func (s *Server) pageDataForViewer() PageData {
 			State:   string(metadata.State),
 			Token:   s.reviewToken(),
 
-			RespondProvider: s.respondMeta.Provider,
-			RespondModel:    s.respondMeta.Model,
-			RespondModels:   s.respondMeta.Models,
-			RespondMode:     s.respondMeta.Mode,
+			RespondModelsJoined: strings.Join(s.respondMeta.Models, ","),
+			RespondProvider:     s.respondMeta.Provider,
+			RespondModel:        s.respondMeta.Model,
+			RespondModels:       s.respondMeta.Models,
+			RespondMode:         s.respondMeta.Mode,
 		}
 	}
 	return data

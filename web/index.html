@@ -14,7 +14,7 @@
 </head>
 <body>
 {{if .Review}}
-<aside id="review-session" class="review-session" data-session-id="{{.Review.ID}}" data-session-state="{{.Review.State}}" data-session-token="{{.Review.Token}}">
+<aside id="review-session" class="review-session" data-session-id="{{.Review.ID}}" data-session-state="{{.Review.State}}" data-session-token="{{.Review.Token}}" data-respond-mode="{{.Review.RespondMode}}" data-respond-provider="{{.Review.RespondProvider}}" data-respond-model="{{.Review.RespondModel}}" data-respond-models="{{.Review.RespondModelsJoined}}">
 <p class="review-session__eyebrow">Review session</p>
 <h1>{{.Review.Title}}</h1>
 {{if .Review.Prompt}}<p class="review-session__prompt">{{.Review.Prompt}}</p>{{end}}

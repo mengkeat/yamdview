@@ -1230,7 +1230,7 @@ func TestReviewPageDataRespondMetadata(t *testing.T) {
 	// Exact field set: respond names are exposed, secrets never are.
 	typ := reflect.TypeOf(server.ReviewPageData{})
 	wantFields := []string{"ID", "Title", "Prompt", "Choices", "State", "Token",
-		"RespondProvider", "RespondModel", "RespondModels", "RespondMode"}
+		"RespondProvider", "RespondModel", "RespondModels", "RespondMode", "RespondModelsJoined"}
 	gotFields := make([]string, 0, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		gotFields = append(gotFields, typ.Field(i).Name)
