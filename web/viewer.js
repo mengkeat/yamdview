@@ -398,7 +398,12 @@
           "Content-Type": "application/json",
           "X-Yamdview-Token": token,
         },
-        body: JSON.stringify({ verdict: verdict, summary: summary.value }),
+        body: JSON.stringify({
+          verdict: verdict,
+          summary: summary.value,
+          // Falls back to raw feedback when no successful preview exists.
+          use_reformulated: reformulate ? reformulate.shouldUse() : false,
+        }),
       })
         .then(function (response) {
           return response.text().then(function (body) {
