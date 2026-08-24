@@ -3,6 +3,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/feedback"
 	"github.com/mengkeat/yamdview/internal/session"
 )
 
@@ -80,6 +82,13 @@ type ReviewPageData struct {
 	Choices []string
 	State   string
 	Token   string
+
+	// Respond metadata tells the browser which reformulation backend and
+	// mode are configured. Names only — API keys never reach this struct.
+	RespondProvider string
+	RespondModel    string
+	RespondModels   []string
+	RespondMode     string
 }
 
 // Assets provides the embedded web assets (template, CSS, JS).
@@ -128,6 +137,9 @@ type Server struct {
 	tmpl     *template.Template
 	katexFS  fs.FS
 	review   *session.Session
+
+	reformulator ReformulateFunc
+	respondMeta  RespondMeta
 
 	lifecycleMu sync.Mutex
 	started     bool
@@ -186,6 +198,31 @@ func WithSession(review *session.Session) Option {
 // reported via POST /client-error.
 func WithClientErrorHandler(fn func(ClientError)) Option {
 	return func(s *Server) { s.onClientError = fn }
+}
+
+// ReformulateFunc runs one feedback reformulation attempt. It returns a
+// ReformulateResult with silent-fallback semantics (Applied=false plus
+// diagnostics instead of an error); the server never turns reformulation
+// failures into HTTP 5xx responses.
+type ReformulateFunc func(ctx context.Context, model string, req feedback.ReformulateRequest, annotations []annotation.Annotation) feedback.ReformulateResult
+
+// RespondMeta describes the configured reformulation capability to the
+// browser. It carries provider/model names only, never secrets.
+type RespondMeta struct {
+	Provider string
+	Model    string
+	Models   []string
+	Mode     string // "off", "ask", or "auto"
+}
+
+// WithReformulator enables POST /api/session/reformulate by injecting the
+// reformulation capability and its public metadata. The actual provider is
+// constructed by the application layer; the server only sees this function.
+func WithReformulator(fn ReformulateFunc, meta RespondMeta) Option {
+	return func(s *Server) {
+		s.reformulator = fn
+		s.respondMeta = meta
+	}
 }
 
 // New creates a new Server that will listen on the given address.
@@ -250,6 +287,7 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 	// Review session metadata and token-gated submission endpoints.
 	mux.HandleFunc("/api/session", s.handleSessionMetadata)
 	mux.HandleFunc("/api/session/submit", s.handleSessionSubmit)
+	mux.HandleFunc("/api/session/reformulate", s.handleSessionReformulate)
 	mux.HandleFunc("/api/session/annotations", s.handleAnnotationCollection)
 	mux.HandleFunc("/api/session/annotations/", s.handleAnnotationItem)
 
@@ -390,6 +428,11 @@ func (s *Server) pageDataForViewer() PageData {
 			Choices: metadata.Choices,
 			State:   string(metadata.State),
 			Token:   s.reviewToken(),
+
+			RespondProvider: s.respondMeta.Provider,
+			RespondModel:    s.respondMeta.Model,
+			RespondModels:   s.respondMeta.Models,
+			RespondMode:     s.respondMeta.Mode,
 		}
 	}
 	return data
@@ -865,8 +908,9 @@ func writeAPIError(w http.ResponseWriter, status int, message string) {
 }
 
 type sessionSubmitRequest struct {
-	Verdict *string `json:"verdict"`
-	Summary *string `json:"summary"`
+	Verdict         *string `json:"verdict"`
+	Summary         *string `json:"summary"`
+	UseReformulated *bool   `json:"use_reformulated"`
 }
 
 // handleSessionSubmit accepts one token-authenticated review submission. The
@@ -902,6 +946,19 @@ func (s *Server) handleSessionSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.UseReformulated != nil && *req.UseReformulated {
+		stored := s.review.ReformulatedResult()
+		if stored == nil {
+			http.Error(w, "no reformulation preview exists", http.StatusBadRequest)
+			return
+		}
+		// Mark approval and store before Submit so ordering stays safe even
+		// if Submit fails below. A concurrent SetReformulated racing this
+		// write is acceptable: last writer wins on an idempotent preview.
+		stored.ApprovedByUser = true
+		s.review.SetReformulated(stored)
+	}
+
 	metadata := s.review.Metadata()
 	if len(metadata.Choices) > 0 && !containsChoice(metadata.Choices, *req.Verdict) {
 		http.Error(w, "verdict is not one of the session choices", http.StatusBadRequest)
@@ -920,6 +977,120 @@ func (s *Server) handleSessionSubmit(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"state": string(session.Submitted)})
 }
 
+// reformulateRequest is the browser-facing body of POST
+// /api/session/reformulate. Both fields are optional; an empty object {} is
+// valid and means "use the configured defaults".
+type reformulateRequest struct {
+	Summary *string `json:"summary"`
+	Model   *string `json:"model"`
+}
+
+// reformulatedPreviewJSON mirrors feedback.Reformulated on the wire. It is a
+// separate type so the preview shape stays stable even if the payload struct
+// grows review-internal fields.
+type reformulatedPreviewJSON struct {
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Text           string `json:"text"`
+	ApprovedByUser bool   `json:"approved_by_user"`
+}
+
+// diagnosticJSON gives llm.Diagnostic explicit wire names for the preview.
+type diagnosticJSON struct {
+	Severity string `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+// reformulateResponse is the always-200 preview response. Silent fallback
+// contract: provider or validation failures yield applied=false plus
+// diagnostics here — never an HTTP 5xx.
+type reformulateResponse struct {
+	Applied      bool                     `json:"applied"`
+	Reformulated *reformulatedPreviewJSON `json:"reformulated"`
+	Diagnostics  []diagnosticJSON         `json:"diagnostics"`
+	Provider     string                   `json:"provider"`
+	Model        string                   `json:"model"`
+}
+
+// handleSessionReformulate produces one token-gated reformulation preview.
+// The reformulation capability itself is injected via WithReformulator; the
+// endpoint returns 404 when no session or no capability is configured.
+func (s *Server) handleSessionReformulate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !s.authorizeAnnotationMutation(w, r) {
+		return
+	}
+	if s.reformulator == nil {
+		writeAPIError(w, http.StatusNotFound, "review session not found")
+		return
+	}
+
+	var req reformulateRequest
+	if _, ok := decodeReformulateBody(w, r, &req); !ok {
+		return
+	}
+
+	metadata := s.review.Metadata()
+	model := s.respondMeta.Model
+	if req.Model != nil && strings.TrimSpace(*req.Model) != "" {
+		model = strings.TrimSpace(*req.Model)
+	}
+	reformulateReq := feedback.ReformulateRequest{
+		Title:   metadata.Title,
+		Prompt:  metadata.Prompt,
+		Verdict: "",
+		Summary: metadata.Summary,
+	}
+	if req.Summary != nil {
+		reformulateReq.Summary = *req.Summary
+	}
+
+	result := s.reformulator(r.Context(), model, reformulateReq, s.review.AnnotationSnapshot())
+
+	resp := reformulateResponse{
+		Diagnostics: make([]diagnosticJSON, 0, len(result.Diagnostics)),
+		Provider:    s.respondMeta.Provider,
+		Model:       model,
+	}
+	for _, diag := range result.Diagnostics {
+		resp.Diagnostics = append(resp.Diagnostics, diagnosticJSON{
+			Severity: diag.Severity,
+			Code:     diag.Code,
+			Message:  diag.Message,
+		})
+	}
+	if result.Applied && result.Reformulated != nil {
+		resp.Applied = true
+		resp.Provider = result.Reformulated.Provider
+		resp.Model = result.Reformulated.Model
+		resp.Reformulated = &reformulatedPreviewJSON{
+			Provider:       result.Reformulated.Provider,
+			Model:          result.Reformulated.Model,
+			Text:           result.Reformulated.Text,
+			ApprovedByUser: false,
+		}
+		// Store the unapproved preview so a later submit with
+		// use_reformulated=true can approve it.
+		s.review.SetReformulated(result.Reformulated)
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// decodeReformulateBody decodes the strict JSON request body. It reuses the
+// annotation body rules: size-capped read, unknown fields rejected, exactly
+// one JSON object, no null values.
+func decodeReformulateBody(w http.ResponseWriter, r *http.Request, target any) (map[string]json.RawMessage, bool) {
+	return decodeAnnotationBody(w, r, target)
+}
+
+// containsChoice reports whether verdict appears in choices verbatim.
+// A missing choice list means any verdict is accepted.
 func containsChoice(choices []string, verdict string) bool {
 	for _, choice := range choices {
 		if choice == verdict {
