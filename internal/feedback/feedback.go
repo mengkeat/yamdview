@@ -168,6 +168,27 @@ func RenderMarkdown(payload Payload) (string, error) {
 			lines = append(lines, "")
 		}
 	}
+	// Reformulated section format (deterministic; rendered only when
+	// payload.Reformulated is non-nil, appended after Comments or after the
+	// summary when no comments are present):
+	//
+	//   ### Consolidated instruction
+	//   (<provider>/<model>, approved by user: yes|no)
+	//   <blank line>
+	//   <text, one output line per source line>
+	if r := payload.Reformulated; r != nil {
+		approval := "no"
+		if r.ApprovedByUser {
+			approval = "yes"
+		}
+		lines = append(lines,
+			"### Consolidated instruction",
+			fmt.Sprintf("(%s/%s, approved by user: %s)", r.Provider, r.Model, approval),
+			"",
+		)
+		lines = append(lines, strings.Split(r.Text, "\n")...)
+		lines = append(lines, "")
+	}
 	return strings.Join(lines, "\n"), nil
 }
 
