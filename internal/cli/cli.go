@@ -40,6 +40,7 @@ type ReviewConfig struct {
 	Output  string
 	Timeout time.Duration
 	Watch   bool
+	Respond llm.RespondSettings // LLM feedback reformulation for this review
 }
 
 const DefaultDebounce = watcher.DefaultDebounce
@@ -95,6 +96,7 @@ func Parse(args []string) (Config, error) {
 	var title, prompt, choices, format, output string
 	var reviewTimeout time.Duration
 	var watch bool
+	var respondLLM, respondProvider, respondModel string
 	if mode == ModeReview {
 		flags.StringVar(&title, "title", "", "session title shown in the review viewer")
 		flags.StringVar(&prompt, "prompt", "", "question or request shown above the document")
@@ -103,6 +105,9 @@ func Parse(args []string) (Config, error) {
 		flags.StringVar(&output, "output", "", "feedback output path (or - for stdout)")
 		flags.DurationVar(&reviewTimeout, "timeout", 0, "automatically end the review after this duration")
 		flags.BoolVar(&watch, "watch", false, "watch the review source for changes")
+		flags.StringVar(&respondLLM, "respond-llm", string(llm.ModeOff), "feedback reformulation via a configured LLM: off, ask, auto")
+		flags.StringVar(&respondProvider, "respond-provider", "", "named LLM provider (from --llm-config) used to reformulate feedback")
+		flags.StringVar(&respondModel, "respond-model", "", "override the model used for feedback reformulation")
 	}
 
 	if err := flags.Parse(args); err != nil {
@@ -196,6 +201,27 @@ func Parse(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("--llm %q requires --llm-local or --llm-provider", llmModeValue)
 	}
 
+	respondMode, err := llm.ParseRespondMode(respondLLM)
+	if err != nil {
+		return Config{}, fmt.Errorf("--respond-llm: %w", err)
+	}
+	respond := llm.RespondSettings{
+		Mode:         respondMode,
+		ProviderName: respondProvider,
+		Model:        respondModel,
+		ConfigPath:   *llmConfig,
+	}
+	if respondMode != llm.ModeOff {
+		// Reformulation always calls a named hosted/config-file provider;
+		// local profile shortcuts are intentionally not supported here.
+		if respond.ProviderName == "" {
+			return Config{}, fmt.Errorf("--respond-llm %q requires --respond-provider naming a provider in the config file", respondMode)
+		}
+		if respond.ConfigPath == "" {
+			return Config{}, fmt.Errorf("--respond-llm %q requires --llm-config pointing at the provider config file", respondMode)
+		}
+	}
+
 	return Config{
 		Mode:         mode,
 		MarkdownPath: path,
@@ -215,6 +241,7 @@ func Parse(args []string) (Config, error) {
 			Output:  output,
 			Timeout: reviewTimeout,
 			Watch:   watch,
+			Respond: respond,
 		},
 	}, nil
 }
