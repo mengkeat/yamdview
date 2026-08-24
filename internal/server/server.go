@@ -1021,11 +1021,17 @@ func (s *Server) handleSessionReformulate(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if !s.authorizeAnnotationMutation(w, r) {
+	if s.review == nil || s.reformulator == nil {
+		writeAPIError(w, http.StatusNotFound, "review session not found")
 		return
 	}
-	if s.reformulator == nil {
-		writeAPIError(w, http.StatusNotFound, "review session not found")
+
+	if !s.review.TokenMatches(r.Header.Get(SessionTokenHeader)) {
+		writeAPIError(w, http.StatusForbidden, "invalid or missing session token")
+		return
+	}
+	if s.review.CurrentState() != session.Open {
+		writeAPIError(w, http.StatusConflict, "session is no longer open")
 		return
 	}
 
