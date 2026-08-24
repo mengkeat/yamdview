@@ -42,6 +42,7 @@ func loadPromptTemplates() (map[RequestKind]*template.Template, error) {
 			KindMathFix:           "prompts/math_fix.md",
 			KindTableFix:          "prompts/table_fix.md",
 			KindClassifyCandidate: "prompts/classify_candidate.md",
+			KindFeedbackRephrase:  "prompts/feedback_rephrase.md",
 		}
 		promptTemplates = make(map[RequestKind]*template.Template, len(entries))
 		for kind, name := range entries {
@@ -72,6 +73,8 @@ func SystemPrompt(kind RequestKind) string {
 		return "You are a precise Markdown table repair tool. Output strict JSON only."
 	case KindClassifyCandidate:
 		return "You are a precise math-prose classifier. Output strict JSON only."
+	case KindFeedbackRephrase:
+		return "You are a precise feedback reformulation tool. Output strict JSON only."
 	default:
 		return "You are a precise repair tool. Output strict JSON only."
 	}
