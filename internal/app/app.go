@@ -395,7 +395,7 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 		return ReviewInternal, errors.New("review ended without a terminal state")
 	}
 	if respondOK && a.cfg.Review.Respond.Mode == llm.ModeAuto {
-		a.runAutoReformulate(review, reformulateFn)
+		a.runAutoReformulate(review, reformulateFn, respondMeta.Model)
 	}
 	if err := a.writeReviewFeedback(review); err != nil {
 		return ReviewInternal, err
@@ -407,14 +407,14 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 // one attempt after the review reaches a terminal state, skipped when a user
 // already generated (and possibly approved) a preview. Diagnostics are logged;
 // an applied result is stored unapproved alongside the raw feedback.
-func (a *App) runAutoReformulate(review *session.Session, fn server.ReformulateFunc) {
+func (a *App) runAutoReformulate(review *session.Session, fn server.ReformulateFunc, model string) {
 	if review.ReformulatedResult() != nil {
 		return
 	}
 	metadata := review.Metadata()
 	ctx, cancel := a.respondContext(context.Background())
 	defer cancel()
-	result := fn(ctx, "", feedback.ReformulateRequest{
+	result := fn(ctx, model, feedback.ReformulateRequest{
 		Title:   metadata.Title,
 		Prompt:  metadata.Prompt,
 		Verdict: metadata.Verdict,
