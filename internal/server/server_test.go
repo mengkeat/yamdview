@@ -3,6 +3,7 @@ package server_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"html/template"
 	"io"
@@ -13,9 +14,12 @@ import (
 
 	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/document"
+	"github.com/mengkeat/yamdview/internal/feedback"
+	"github.com/mengkeat/yamdview/internal/llm"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/session"
 	"github.com/mengkeat/yamdview/web"
+	"reflect"
 )
 
 var testAssets = server.Assets{
@@ -924,4 +928,350 @@ func TestServerCloseClosesActiveSSEClients(t *testing.T) {
 		t.Fatal("active SSE client remained open after server close")
 	}
 	_ = resp.Body.Close()
+}
+
+// reformulateStub records every reformulate invocation and replies with a
+// scripted result. It doubles as a capture probe for the request built by
+// the server.
+type reformulateStub struct {
+	requests []struct {
+		model string
+		req   feedback.ReformulateRequest
+		anns  int
+	}
+	result feedback.ReformulateResult
+}
+
+func (s *reformulateStub) run(_ context.Context, model string, req feedback.ReformulateRequest, annotations []annotation.Annotation) feedback.ReformulateResult {
+	s.requests = append(s.requests, struct {
+		model string
+		req   feedback.ReformulateRequest
+		anns  int
+	}{model: model, req: req, anns: len(annotations)})
+	return s.result
+}
+
+func newReformulateTestServer(t *testing.T, mutate func(*reformulateStub)) (*server.Server, *session.Session, *reformulateStub) {
+	t.Helper()
+	stub := &reformulateStub{}
+	if mutate != nil {
+		mutate(stub)
+	}
+	review, err := session.New("review-reform", "Review this", "What do you think?", []string{"approve", "changes"}, []byte("# source"), document.DocumentSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Document", "<p>Content</p>"),
+		server.WithSession(review),
+		server.WithReformulator(stub.run, server.RespondMeta{
+			Provider: "mock-provider",
+			Model:    "default-model",
+			Models:   []string{"default-model", "alt-model"},
+			Mode:     "ask",
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	t.Cleanup(func() { srv.Close() })
+	return srv, review, stub
+}
+
+func postJSON(t *testing.T, url, token, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set(server.SessionTokenHeader, token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func decodeBody(t *testing.T, resp *http.Response) map[string]any {
+	t.Helper()
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("invalid JSON response %q: %v", data, err)
+	}
+	return out
+}
+
+func TestSessionReformulateNotFoundWithoutSessionOrCapability(t *testing.T) {
+	// No session at all.
+	srv, err := server.New("127.0.0.1:0", testAssets, testPageData("Document", "<p>x</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	func() {
+		defer srv.Close()
+		resp := postJSON(t, srv.URL()+"api/session/reformulate", "", `{}`)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("no-session status = %d, want 404", resp.StatusCode)
+		}
+	}()
+
+	// Session attached but no reformulator configured.
+	review, err := session.New("review-none", "T", "P", nil, []byte("# s"), document.DocumentSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2, err := server.New("127.0.0.1:0", testAssets, testPageData("Document", "<p>x</p>"), server.WithSession(review))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2.Start()
+	defer srv2.Close()
+	resp := postJSON(t, srv2.URL()+"api/session/reformulate", "", `{}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("no-reformulator status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSessionReformulateRequiresTokenAndOpenSession(t *testing.T) {
+	srv, _, _ := newReformulateTestServer(t, nil)
+
+	for name, token := range map[string]string{"missing": "", "wrong": "not-the-token"} {
+		t.Run(name, func(t *testing.T) {
+			resp := postJSON(t, srv.URL()+"api/session/reformulate", token, `{}`)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("%s token status = %d, want 403", name, resp.StatusCode)
+			}
+		})
+	}
+
+}
+
+func TestSessionReformulateRejectsClosedSession(t *testing.T) {
+	srv, review, _ := newReformulateTestServer(t, nil)
+
+	if err := review.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	resp := postJSON(t, srv.URL()+"api/session/reformulate", review.Token, `{}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("closed session status = %d, want 409", resp.StatusCode)
+	}
+}
+
+func TestSessionReformulateHappyPathStoresPreview(t *testing.T) {
+	srv, review, stub := newReformulateTestServer(t, func(stub *reformulateStub) {
+		stub.result = feedback.ReformulateResult{
+			Applied: true,
+			Reformulated: &feedback.Reformulated{
+				Provider: "mock-provider",
+				Model:    "alt-model",
+				Text:     "consolidated instructions",
+			},
+		}
+	})
+
+	resp := postJSON(t, srv.URL()+"api/session/reformulate", review.Token,
+		`{"summary":"custom summary","model":"alt-model"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeBody(t, resp)
+
+	if body["applied"] != true {
+		t.Fatalf("applied = %#v, want true", body["applied"])
+	}
+	ref, ok := body["reformulated"].(map[string]any)
+	if !ok {
+		t.Fatalf("reformulated missing from response: %#v", body)
+	}
+	for key, want := range map[string]any{
+		"provider": "mock-provider", "model": "alt-model",
+		"text": "consolidated instructions", "approved_by_user": false,
+	} {
+		if ref[key] != want {
+			t.Errorf("reformulated[%q] = %#v, want %#v", key, ref[key], want)
+		}
+	}
+	if diags, ok := body["diagnostics"].([]any); !ok || len(diags) != 0 {
+		t.Errorf("diagnostics = %#v, want empty array", body["diagnostics"])
+	}
+	if body["provider"] != "mock-provider" || body["model"] != "alt-model" {
+		t.Errorf("top-level provider/model = %v/%v", body["provider"], body["model"])
+	}
+
+	if len(stub.requests) != 1 {
+		t.Fatalf("stub called %d times, want 1", len(stub.requests))
+	}
+	call := stub.requests[0]
+	if call.model != "alt-model" || call.req.Title != "Review this" ||
+		call.req.Prompt != "What do you think?" || call.req.Verdict != "" ||
+		call.req.Summary != "custom summary" || call.anns != 0 {
+		t.Fatalf("unexpected reformulate request: model=%q req=%+v anns=%d", call.model, call.req, call.anns)
+	}
+
+	stored := review.ReformulatedResult()
+	if stored == nil || stored.Text != "consolidated instructions" || stored.ApprovedByUser {
+		t.Fatalf("session did not store unapproved preview: %#v", stored)
+	}
+}
+
+func TestSessionReformulateSilentFallback(t *testing.T) {
+	srv, review, _ := newReformulateTestServer(t, func(stub *reformulateStub) {
+		stub.result = feedback.ReformulateResult{
+			Diagnostics: []llm.Diagnostic{{
+				Severity: llm.SeverityWarning,
+				Code:     llm.CodeRejected,
+				Message:  "confidence gate rejected the candidate",
+			}},
+		}
+	})
+
+	resp := postJSON(t, srv.URL()+"api/session/reformulate", review.Token, `{}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (silent fallback)", resp.StatusCode)
+	}
+	body := decodeBody(t, resp)
+	if body["applied"] != false {
+		t.Fatalf("applied = %#v, want false", body["applied"])
+	}
+	if _, present := body["reformulated"]; !present || body["reformulated"] != nil {
+		t.Fatalf("reformulated = %#v, want null", body["reformulated"])
+	}
+	diags, ok := body["diagnostics"].([]any)
+	if !ok || len(diags) != 1 {
+		t.Fatalf("diagnostics = %#v, want one entry", body["diagnostics"])
+	}
+	diag, ok := diags[0].(map[string]any)
+	if !ok || diag["severity"] != "warning" || diag["code"] != "llm.rejected" ||
+		diag["message"] != "confidence gate rejected the candidate" {
+		t.Fatalf("diagnostic entry = %#v", diags[0])
+	}
+	if got := review.ReformulatedResult(); got != nil {
+		t.Fatalf("fallback must not store a preview: %#v", got)
+	}
+}
+
+func TestSessionReformulateValidatesBody(t *testing.T) {
+	srv, review, _ := newReformulateTestServer(t, nil)
+
+	unknown := postJSON(t, srv.URL()+"api/session/reformulate", review.Token, `{"bogus":true}`)
+	unknown.Body.Close()
+	if unknown.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d, want 400", unknown.StatusCode)
+	}
+
+	oversized := strings.Repeat("a", (1<<20)+64)
+	big := postJSON(t, srv.URL()+"api/session/reformulate", review.Token, oversized)
+	big.Body.Close()
+	if big.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", big.StatusCode)
+	}
+}
+
+func TestSessionSubmitUseReformulated(t *testing.T) {
+	srv, review, _ := newReformulateTestServer(t, func(stub *reformulateStub) {
+		stub.result = feedback.ReformulateResult{
+			Applied: true,
+			Reformulated: &feedback.Reformulated{
+				Provider: "mock-provider", Model: "default-model", Text: "preview text",
+			},
+		}
+	})
+
+	// use_reformulated without any prior preview fails and leaves the session open.
+	resp := postJSON(t, srv.URL()+"api/session/submit", review.Token,
+		`{"verdict":"approve","summary":"s","use_reformulated":true}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("no-preview submit status = %d, want 400", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if review.CurrentState() != session.Open {
+		t.Fatalf("failed submit changed state to %q", review.CurrentState())
+	}
+
+	// Produce a preview, then approve it through the submit endpoint.
+	preview := postJSON(t, srv.URL()+"api/session/reformulate", review.Token, `{}`)
+	preview.Body.Close()
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview status = %d, want 200", preview.StatusCode)
+	}
+
+	submit := postJSON(t, srv.URL()+"api/session/submit", review.Token,
+		`{"verdict":"approve","summary":"s","use_reformulated":true}`)
+	if submit.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(submit.Body)
+		submit.Body.Close()
+		t.Fatalf("submit status = %d (%s), want 200", submit.StatusCode, body)
+	}
+	submit.Body.Close()
+
+	metadata := review.Metadata()
+	if metadata.State != session.Submitted {
+		t.Fatalf("state = %q, want submitted", metadata.State)
+	}
+	stored := review.ReformulatedResult()
+	if stored == nil || !stored.ApprovedByUser || stored.Text != "preview text" {
+		t.Fatalf("stored reformulation not approved copy: %#v", stored)
+	}
+}
+
+func TestReviewPageDataRespondMetadata(t *testing.T) {
+	// Exact field set: respond names are exposed, secrets never are.
+	typ := reflect.TypeOf(server.ReviewPageData{})
+	wantFields := []string{"ID", "Title", "Prompt", "Choices", "State", "Token",
+		"RespondProvider", "RespondModel", "RespondModels", "RespondMode"}
+	gotFields := make([]string, 0, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		gotFields = append(gotFields, typ.Field(i).Name)
+	}
+	if !reflect.DeepEqual(gotFields, wantFields) {
+		t.Fatalf("ReviewPageData fields = %#v, want %#v", gotFields, wantFields)
+	}
+	for _, name := range gotFields {
+		lower := strings.ToLower(name)
+		for _, secret := range []string{"key", "secret", "apikey"} {
+			if strings.Contains(lower, secret) {
+				t.Errorf("ReviewPageData has suspicious field %q", name)
+			}
+		}
+	}
+
+	// The rendered page carries the respond names.
+	review, err := session.New("review-page", "T", "P", nil, []byte("# s"), document.DocumentSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageAssets := testAssets
+	pageAssets.IndexHTML = `<html><body>{{if .Review}}{{.Review.RespondProvider}}|{{.Review.RespondModel}}|{{.Review.RespondMode}}{{end}}</body></html>`
+	srv, err := server.New("127.0.0.1:0", pageAssets, testPageData("Document", "<p>x</p>"),
+		server.WithSession(review),
+		server.WithReformulator(func(context.Context, string, feedback.ReformulateRequest, []annotation.Annotation) feedback.ReformulateResult {
+			return feedback.ReformulateResult{}
+		}, server.RespondMeta{Provider: "prov-x", Model: "mod-y", Mode: "ask"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	defer srv.Close()
+
+	page, err := http.Get(srv.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageBody, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	if !strings.Contains(string(pageBody), "prov-x|mod-y|ask") {
+		t.Fatalf("page missing respond metadata: %q", pageBody)
+	}
 }
