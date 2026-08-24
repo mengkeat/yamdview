@@ -28,6 +28,18 @@ type PromptData struct {
 	Diagnostics []string
 	// HeuristicTeX is an existing heuristic TeX candidate (math only).
 	HeuristicTeX string
+	// Title is the document title (KindFeedbackRephrase only).
+	Title string
+	// AgentPrompt is the agent instruction under review (KindFeedbackRephrase only).
+	AgentPrompt string
+	// Verdict is the review verdict, e.g. "needs_changes" (KindFeedbackRephrase only).
+	Verdict string
+	// Summary is the reviewer's free-form summary (KindFeedbackRephrase only).
+	Summary string
+	// Annotations are the review annotations with quoted source spans
+	// (KindFeedbackRephrase only). Templates use {{- if}} guards so repair and
+	// classification kinds are unaffected by these fields.
+	Annotations []RephraseAnnotation
 }
 
 var (
