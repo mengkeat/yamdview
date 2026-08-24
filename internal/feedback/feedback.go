@@ -32,16 +32,27 @@ type Timing struct {
 	DurationMS  int64     `json:"duration_ms"`
 }
 
+// Reformulated records the LLM-reformulated consolidation of the review
+// feedback, including which provider/model produced it and whether the user
+// approved the reformulation.
+type Reformulated struct {
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	Text           string `json:"text"`
+	ApprovedByUser bool   `json:"approved_by_user"`
+}
+
 // Payload is the versioned review feedback contract.
 type Payload struct {
-	Version   int                     `json:"yamdview_feedback_version"`
-	SessionID string                  `json:"session_id"`
-	Title     string                  `json:"title"`
-	Prompt    string                  `json:"prompt"`
-	Verdict   string                  `json:"verdict"`
-	Summary   string                  `json:"summary"`
-	Comments  []annotation.Annotation `json:"comments"`
-	Timing    Timing                  `json:"timing"`
+	Version      int                     `json:"yamdview_feedback_version"`
+	SessionID    string                  `json:"session_id"`
+	Title        string                  `json:"title"`
+	Prompt       string                  `json:"prompt"`
+	Verdict      string                  `json:"verdict"`
+	Summary      string                  `json:"summary"`
+	Comments     []annotation.Annotation `json:"comments"`
+	Reformulated *Reformulated           `json:"reformulated,omitempty"`
+	Timing       Timing                  `json:"timing"`
 }
 
 // Feedback and ReviewFeedback are descriptive aliases for Payload.
@@ -58,6 +69,18 @@ func (p Payload) Validate() error {
 	for i, comment := range p.Comments {
 		if err := comment.Validate(); err != nil {
 			return fmt.Errorf("invalid feedback comment %d: %w", i, err)
+		}
+	}
+	if p.Reformulated != nil {
+		r := p.Reformulated
+		if r.Provider == "" {
+			return errors.New("invalid feedback reformulated: provider must not be empty")
+		}
+		if r.Model == "" {
+			return errors.New("invalid feedback reformulated: model must not be empty")
+		}
+		if r.Text == "" {
+			return errors.New("invalid feedback reformulated: text must not be empty")
 		}
 	}
 	return nil
