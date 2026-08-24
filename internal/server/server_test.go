@@ -1275,3 +1275,96 @@ func TestReviewPageDataRespondMetadata(t *testing.T) {
 		t.Fatalf("page missing respond metadata: %q", pageBody)
 	}
 }
+
+func newReformulatePageTestServer(t *testing.T, mode string) (*server.Server, *session.Session) {
+	t.Helper()
+	review, err := session.New("review-page-reform", "Review this", "What do you think?", []string{"approve"}, []byte("# source"), document.DocumentSnapshot{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets, err := web.LoadAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New("127.0.0.1:0", assets, testPageData("Document", "<p>Content</p>"),
+		server.WithSession(review),
+		server.WithReformulator(func(context.Context, string, feedback.ReformulateRequest, []annotation.Annotation) feedback.ReformulateResult {
+			return feedback.ReformulateResult{}
+		}, server.RespondMeta{
+			Provider: "mock-provider",
+			Model:    "default-model",
+			Models:   []string{"default-model", "alt-model"},
+			Mode:     mode,
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
+	t.Cleanup(func() { srv.Close() })
+	return srv, review
+}
+
+func fetchPage(t *testing.T, srv *server.Server) string {
+	t.Helper()
+	page, err := http.Get(srv.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	return string(body)
+}
+
+func TestReviewPageReformulateSectionRenderedForAskMode(t *testing.T) {
+	srv, review := newReformulatePageTestServer(t, "ask")
+
+	pageBody := fetchPage(t, srv)
+	for _, want := range []string{
+		`data-respond-mode="ask"`,
+		`data-respond-provider="mock-provider"`,
+		`data-respond-model="default-model"`,
+		`data-respond-models="default-model,alt-model"`,
+		`id="review-reformulate-model"`,
+		`id="review-reformulate-run"`,
+		"Draft consolidated instruction",
+	} {
+		if !strings.Contains(pageBody, want) {
+			t.Errorf("ask-mode page missing %q", want)
+		}
+	}
+
+	lower := strings.ToLower(pageBody)
+	for _, secret := range []string{"apikey", "api_key", "secret"} {
+		if strings.Contains(lower, secret) {
+			t.Errorf("page leaked suspicious field %q", secret)
+		}
+	}
+	if strings.Contains(lower, review.Token[1:]) && !strings.Contains(pageBody, `data-session-token="`) {
+		t.Errorf("token exposed outside the session attribute")
+	}
+}
+
+func TestReviewPageReformulateSectionAbsentWithoutAskMode(t *testing.T) {
+	for _, mode := range []string{"off", ""} {
+		t.Run(mode, func(t *testing.T) {
+			srv, _ := newReformulatePageTestServer(t, mode)
+			pageBody := fetchPage(t, srv)
+			if strings.Contains(pageBody, "review-reformulate") {
+				t.Fatalf("mode %q page contains reformulation section", mode)
+			}
+			if strings.Contains(pageBody, `data-respond-mode="ask"`) {
+				t.Fatalf("mode %q page exposes ask metadata", mode)
+			}
+		})
+	}
+
+	// A plain review page with no reformulator configured also has no section.
+	srv, review := newReviewTestServer(t)
+	pageBody := fetchPage(t, srv)
+	if strings.Contains(pageBody, "review-reformulate") {
+		t.Fatal("plain review page contains reformulation section")
+	}
+	if !strings.Contains(pageBody, review.Token) {
+		t.Fatal("sanity: plain review page should still embed the session token")
+	}
+}
