@@ -207,3 +207,53 @@ var errRead = &readErr{}
 type readErr struct{}
 
 func (*readErr) Error() string { return "read failed" }
+
+func TestParseConfigModelsList(t *testing.T) {
+	doc := `{
+  "providers": {
+    "zai": {
+      "type": "openai-compatible",
+      "base_url": "https://api.z.ai/api/paas/v4",
+      "model": "glm-4.7",
+      "models": ["glm-4.7", "glm-4.6"],
+      "api_key_env": "ZAI_API_KEY"
+    }
+  }
+}`
+	cfg, err := ParseConfig([]byte(doc))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := cfg.Providers["zai"].Models
+	if len(got) != 2 || got[0] != "glm-4.7" || got[1] != "glm-4.6" {
+		t.Errorf("models = %v, want [glm-4.7 glm-4.6]", got)
+	}
+
+	if _, err := ParseConfig([]byte(`{"providers":{"x":{"type":"openai-compatible","modelss":["m"]}}}`)); err == nil {
+		t.Error("expected error for unknown field next to models")
+	}
+}
+
+func TestModelChoices(t *testing.T) {
+	tests := []struct {
+		name string
+		pc   ProviderConfig
+		want []string
+	}{
+		{"models list wins", ProviderConfig{Model: "a", Models: []string{"b", "c"}}, []string{"b", "c"}},
+		{"single fallback", ProviderConfig{Model: "a"}, []string{"a"}},
+		{"empty", ProviderConfig{}, nil},
+	}
+	for _, tt := range tests {
+		got := tt.pc.ModelChoices()
+		if len(got) != len(tt.want) {
+			t.Errorf("%s: ModelChoices() = %v, want %v", tt.name, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("%s: ModelChoices() = %v, want %v", tt.name, got, tt.want)
+			}
+		}
+	}
+}

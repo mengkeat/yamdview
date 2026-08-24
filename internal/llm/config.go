@@ -86,12 +86,27 @@ type ProviderConfig struct {
 	APIKeyEnv   string       `json:"api_key_env,omitempty"`
 	APIKey      string       `json:"api_key,omitempty"`
 	Timeout     duration     `json:"timeout,omitempty"`
+	Models      []string     `json:"models,omitempty"`
 	MaxTokens   int          `json:"max_tokens,omitempty"`
 	Temperature float64      `json:"temperature,omitempty"`
 	Command     []string     `json:"command,omitempty"`
 	MaxBytes    int          `json:"max_bytes,omitempty"`
 }
 
+// ModelChoices returns the models offered for selection in ask mode: the
+// explicit models list when present, otherwise the single configured model,
+// otherwise nil when neither is set.
+func (c ProviderConfig) ModelChoices() []string {
+	if len(c.Models) > 0 {
+		return c.Models
+	}
+	if c.Model != "" {
+		return []string{c.Model}
+	}
+	return nil
+}
+
+// Config is the top-level LLM provider configuration document.
 // Config is the top-level LLM provider configuration document.
 type Config struct {
 	Providers map[string]ProviderConfig `json:"providers"`
