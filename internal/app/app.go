@@ -18,6 +18,7 @@ import (
 
 	"github.com/yuin/goldmark"
 
+	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/document"
 	"github.com/mengkeat/yamdview/internal/feedback"
@@ -48,6 +49,7 @@ type ReviewConfig struct {
 	Output  string
 	Timeout time.Duration
 	Watch   bool
+	Respond llm.RespondSettings // LLM feedback reformulation for this review
 }
 
 // ReviewExitStatus is the stable process status for a completed review.
@@ -102,6 +104,12 @@ type App struct {
 	reviewMu     sync.RWMutex
 	review       *session.Session
 	reviewServer *server.Server
+
+	// resolveRespond constructs the feedback-reformulation provider from a
+	// loaded llm.Config and the Respond settings. It defaults to
+	// llm.ResolveRespondProvider; tests stub this field to inject mock
+	// providers without network access or credential environment variables.
+	resolveRespond func(cfg llm.Config, s llm.RespondSettings) (llm.Provider, string, error)
 }
 
 // New creates a new App with the given configuration. LLM provider
@@ -113,12 +121,13 @@ func New(cfg Config, assets server.Assets) *App {
 		log.Printf("warning: llm provider not available: %v", err)
 	}
 	return &App{
-		cfg:        cfg,
-		md:         markdown.NewRenderer(),
-		assets:     assets,
-		provider:   provider,
-		llmMode:    mode,
-		llmTimeout: timeout,
+		cfg:            cfg,
+		md:             markdown.NewRenderer(),
+		assets:         assets,
+		provider:       provider,
+		llmMode:        mode,
+		llmTimeout:     timeout,
+		resolveRespond: llm.ResolveRespondProvider,
 	}
 }
 
@@ -151,6 +160,60 @@ func (a *App) llmContext(parent context.Context) (context.Context, context.Cance
 		timeout = 30 * time.Second
 	}
 	return context.WithTimeout(parent, timeout)
+}
+
+// respondContext returns a context bounded by the configured reformulation
+// call timeout, or 30 seconds when no explicit timeout is set.
+func (a *App) respondContext(parent context.Context) (context.Context, context.CancelFunc) {
+	timeout := a.cfg.Review.Respond.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+// buildReformulator constructs the review-mode feedback-reformulation
+// capability from cfg.Review.Respond: it loads the provider config file,
+// resolves the named provider (including credential checks), and wraps it in
+// a server.ReformulateFunc with silent-fallback semantics. Misconfiguration
+// never fails the review; it logs one warning and reports ok=false so the
+// review server simply runs without the reformulate endpoint.
+func (a *App) buildReformulator() (fn server.ReformulateFunc, meta server.RespondMeta, ok bool) {
+	settings := a.cfg.Review.Respond
+	if settings.Mode == llm.ModeOff {
+		return nil, server.RespondMeta{}, false
+	}
+	cfg, err := llm.ParseConfigFile(settings.ConfigPath, os.ReadFile)
+	if err != nil {
+		log.Printf("warning: respond llm disabled: %v", err)
+		return nil, server.RespondMeta{}, false
+	}
+	resolve := a.resolveRespond
+	if resolve == nil {
+		resolve = llm.ResolveRespondProvider
+	}
+	provider, model, err := resolve(cfg, settings)
+	if err != nil {
+		log.Printf("warning: respond llm disabled: %v", err)
+		return nil, server.RespondMeta{}, false
+	}
+	var models []string
+	if pc, found := cfg.Providers[settings.ProviderName]; found {
+		models = pc.ModelChoices()
+	}
+	meta = server.RespondMeta{
+		Provider: provider.Name(),
+		Model:    model,
+		Models:   models,
+		Mode:     string(settings.Mode),
+	}
+	fn = func(ctx context.Context, model string, req feedback.ReformulateRequest, annotations []annotation.Annotation) feedback.ReformulateResult {
+		callCtx, cancel := a.respondContext(ctx)
+		defer cancel()
+		result, _ := feedback.Reformulate(callCtx, provider, model, req, annotations)
+		return result
+	}
+	return fn, meta, true
 }
 
 // repairSnapshot runs the LLM repair pass over the snapshot when repair is
@@ -235,7 +298,14 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	if err != nil {
 		return ReviewInternal, fmt.Errorf("create review session: %w", err)
 	}
-	srv, err := server.New(a.cfg.Addr, a.assets, server.PageDataFromAssets(a.assets, title, template.HTML(snapshot.HTML)), server.WithKatexFS(web.KatexFS()), server.WithSession(review))
+	opts := []server.Option{server.WithKatexFS(web.KatexFS()), server.WithSession(review)}
+	reformulateFn, respondMeta, respondOK := a.buildReformulator()
+	if respondOK {
+		// Built before Start so the reformulate endpoint is available from the
+		// first served page.
+		opts = append(opts, server.WithReformulator(reformulateFn, respondMeta))
+	}
+	srv, err := server.New(a.cfg.Addr, a.assets, server.PageDataFromAssets(a.assets, title, template.HTML(snapshot.HTML)), opts...)
 	if err != nil {
 		return ReviewInternal, fmt.Errorf("create review server: %w", err)
 	}
@@ -324,10 +394,38 @@ func (a *App) RunReview() (ReviewExitStatus, error) {
 	default:
 		return ReviewInternal, errors.New("review ended without a terminal state")
 	}
+	if respondOK && a.cfg.Review.Respond.Mode == llm.ModeAuto {
+		a.runAutoReformulate(review, reformulateFn)
+	}
 	if err := a.writeReviewFeedback(review); err != nil {
 		return ReviewInternal, err
 	}
 	return status, nil
+}
+
+// runAutoReformulate performs the automatic reformulation pass for auto mode:
+// one attempt after the review reaches a terminal state, skipped when a user
+// already generated (and possibly approved) a preview. Diagnostics are logged;
+// an applied result is stored unapproved alongside the raw feedback.
+func (a *App) runAutoReformulate(review *session.Session, fn server.ReformulateFunc) {
+	if review.ReformulatedResult() != nil {
+		return
+	}
+	metadata := review.Metadata()
+	ctx, cancel := a.respondContext(context.Background())
+	defer cancel()
+	result := fn(ctx, "", feedback.ReformulateRequest{
+		Title:   metadata.Title,
+		Prompt:  metadata.Prompt,
+		Verdict: metadata.Verdict,
+		Summary: metadata.Summary,
+	}, review.AnnotationSnapshot())
+	for _, diag := range result.Diagnostics {
+		log.Printf("respond llm: %s: %s", diag.Code, diag.Message)
+	}
+	if result.Applied && result.Reformulated != nil {
+		review.SetReformulated(result.Reformulated)
+	}
 }
 
 func (a *App) writeReviewFeedback(review *session.Session) error {
