@@ -385,3 +385,163 @@ func feedbackJSONWithComment() string {
 	}
 	return encoded
 }
+
+func testReformulated() feedback.Reformulated {
+	return feedback.Reformulated{
+		Provider:       "local-openai-compatible",
+		Model:          "qwen2.5:3b",
+		Text:           "The user approves the overall plan but requests two changes:\n- invalidate only the affected cache keys\n- keep the uncached request",
+		ApprovedByUser: true,
+	}
+}
+
+func TestRenderJSONReformulatedGolden(t *testing.T) {
+	payload := testPayload()
+	reformulated := testReformulated()
+	payload.Reformulated = &reformulated
+
+	got, err := feedback.RenderJSON(payload)
+	if err != nil {
+		t.Fatalf("render JSON: %v", err)
+	}
+	want := `{
+  "yamdview_feedback_version": 1,
+  "session_id": "s-20260610-3f9a",
+  "title": "Refactor plan",
+  "prompt": "Please review this plan.",
+  "verdict": "request_changes",
+  "summary": "Mostly good. Two issues around the cache layer.",
+  "comments": [],
+  "reformulated": {
+    "provider": "local-openai-compatible",
+    "model": "qwen2.5:3b",
+    "text": "The user approves the overall plan but requests two changes:\n- invalidate only the affected cache keys\n- keep the uncached request",
+    "approved_by_user": true
+  },
+  "timing": {
+    "opened_at": "2026-06-10T12:00:00Z",
+    "submitted_at": "2026-06-10T12:03:04.52Z",
+    "duration_ms": 184520
+  }
+}
+`
+	if got != want {
+		t.Fatalf("JSON differs from reformulated golden fixture:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRenderMarkdownReformulatedGolden(t *testing.T) {
+	payload := testPayload()
+	reformulated := testReformulated()
+	payload.Reformulated = &reformulated
+
+	got, err := feedback.RenderMarkdown(payload)
+	if err != nil {
+		t.Fatalf("render Markdown: %v", err)
+	}
+	want := `## Review feedback: Refactor plan
+
+**Verdict:** request changes
+
+Mostly good. Two issues around the cache layer.
+
+### Consolidated instruction
+(local-openai-compatible/qwen2.5:3b, approved by user: yes)
+
+The user approves the overall plan but requests two changes:
+- invalidate only the affected cache keys
+- keep the uncached request
+`
+	if got != want {
+		t.Fatalf("Markdown differs from reformulated golden fixture:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRenderMarkdownReformulatedAfterCommentsGolden(t *testing.T) {
+	payload := testPayload()
+	payload.Comments = []annotation.Annotation{
+		{Kind: annotation.KindComment, BlockID: "block-1", StartLine: 10, EndLine: 10, Quote: "selected text", Comment: "Keep this wording.", Status: annotation.StatusActive},
+	}
+	reformulated := testReformulated()
+	reformulated.ApprovedByUser = false
+	payload.Reformulated = &reformulated
+
+	got, err := feedback.RenderMarkdown(payload)
+	if err != nil {
+		t.Fatalf("render Markdown: %v", err)
+	}
+	want := `## Review feedback: Refactor plan
+
+**Verdict:** request changes
+
+Mostly good. Two issues around the cache layer.
+
+### Comments
+
+1. **Comment** (lines 10-10):
+   > selected text
+
+   Keep this wording.
+
+### Consolidated instruction
+(local-openai-compatible/qwen2.5:3b, approved by user: no)
+
+The user approves the overall plan but requests two changes:
+- invalidate only the affected cache keys
+- keep the uncached request
+`
+	if got != want {
+		t.Fatalf("Markdown differs from reformulated-after-comments golden fixture:\n got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestValidateRejectsInvalidReformulated(t *testing.T) {
+	tests := []feedback.Reformulated{
+		{Model: "m", Text: "t"},
+		{Provider: "p", Text: "t"},
+		{Provider: "p", Model: "m"},
+	}
+	for i, reformulated := range tests {
+		payload := testPayload()
+		payload.Reformulated = &reformulated
+		if err := payload.Validate(); err == nil {
+			t.Errorf("invalid reformulated %d was accepted: %#v", i, reformulated)
+		}
+		if _, err := feedback.RenderJSON(payload); err == nil {
+			t.Errorf("RenderJSON accepted invalid reformulated %d", i)
+		}
+	}
+}
+
+func TestDecodeJSONRoundTripsReformulated(t *testing.T) {
+	payload := testPayload()
+	reformulated := testReformulated()
+	payload.Reformulated = &reformulated
+
+	encoded, err := feedback.RenderJSON(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := feedback.DecodeJSON([]byte(encoded))
+	if err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, payload) {
+		t.Fatalf("decoded payload differs:\n got: %#v\nwant: %#v", decoded, payload)
+	}
+}
+
+func TestDecodeJSONRejectsUnknownFieldInsideReformulated(t *testing.T) {
+	payload := testPayload()
+	reformulated := testReformulated()
+	payload.Reformulated = &reformulated
+	encoded, err := feedback.RenderJSON(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := strings.Replace(encoded, `"approved_by_user": true`, `"approved_by_user": true, "extra": 1`, 1)
+	if _, err := feedback.DecodeJSON([]byte(input)); err == nil {
+		t.Fatal("DecodeJSON accepted an unknown field inside reformulated")
+	}
+}
