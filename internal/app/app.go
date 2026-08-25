@@ -429,20 +429,7 @@ func (a *App) runAutoReformulate(review *session.Session, fn server.ReformulateF
 }
 
 func (a *App) writeReviewFeedback(review *session.Session) error {
-	metadata := review.Metadata()
-	duration := metadata.SubmittedAt.Sub(metadata.OpenedAt).Milliseconds()
-	if duration < 0 {
-		duration = 0
-	}
-	payload := feedback.Payload{
-		Version: feedback.CurrentVersion, SessionID: metadata.ID,
-		Title: metadata.Title, Prompt: metadata.Prompt,
-		Verdict: metadata.Verdict, Summary: metadata.Summary, Comments: review.AnnotationSnapshot(),
-		Timing: feedback.Timing{OpenedAt: metadata.OpenedAt, SubmittedAt: metadata.SubmittedAt, DurationMS: duration},
-	}
-	// Include any stored reformulation (user-approved preview or auto-mode
-	// result); nil keeps the payload free of the reformulated section.
-	payload.Reformulated = review.ReformulatedResult()
+	payload := review.FeedbackPayload()
 	format := a.cfg.Review.Format
 	if format == "" {
 		format = feedback.FormatJSON

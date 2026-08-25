@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ import (
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/session"
 	"github.com/mengkeat/yamdview/web"
-	"reflect"
 )
 
 var testAssets = server.Assets{
@@ -1053,7 +1053,6 @@ func TestSessionReformulateRequiresTokenAndOpenSession(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestSessionReformulateRejectsClosedSession(t *testing.T) {
@@ -1229,8 +1228,10 @@ func TestSessionSubmitUseReformulated(t *testing.T) {
 func TestReviewPageDataRespondMetadata(t *testing.T) {
 	// Exact field set: respond names are exposed, secrets never are.
 	typ := reflect.TypeOf(server.ReviewPageData{})
-	wantFields := []string{"ID", "Title", "Prompt", "Choices", "State", "Token",
-		"RespondProvider", "RespondModel", "RespondModels", "RespondMode", "RespondModelsJoined"}
+	wantFields := []string{
+		"ID", "Title", "Prompt", "Choices", "State", "Token",
+		"RespondProvider", "RespondModel", "RespondModels", "RespondMode", "RespondModelsJoined",
+	}
 	gotFields := make([]string, 0, typ.NumField())
 	for i := 0; i < typ.NumField(); i++ {
 		gotFields = append(gotFields, typ.Field(i).Name)

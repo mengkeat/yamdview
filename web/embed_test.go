@@ -10,7 +10,9 @@ func TestReviewAnnotatorAssetWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"X-Yamdview-Token", "/api/session", "/api/session/annotations", "suggested_replacement", "CSS.highlights", "Add comment"} {
+	// Endpoint paths are page-relative so the same assets work both at the
+	// viewer root and under a per-session mount such as /sessions/<id>/.
+	for _, want := range []string{"X-Yamdview-Token", "api/session", "api/session/annotations", "suggested_replacement", "CSS.highlights", "Add comment"} {
 		if !strings.Contains(assets.AnnotatorJS, want) {
 			t.Errorf("annotator asset missing %q", want)
 		}

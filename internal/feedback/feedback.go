@@ -181,7 +181,8 @@ func RenderMarkdown(payload Payload) (string, error) {
 		if r.ApprovedByUser {
 			approval = "yes"
 		}
-		lines = append(lines,
+		lines = append(
+			lines,
 			"### Consolidated instruction",
 			fmt.Sprintf("(%s/%s, approved by user: %s)", r.Provider, r.Model, approval),
 			"",

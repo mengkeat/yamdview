@@ -149,6 +149,10 @@ type Server struct {
 	started     bool
 	closed      bool
 	serveDone   chan struct{}
+	// eventsDone is closed by Close so /events streams terminate even when
+	// this Server's handler is mounted on an outer listener (agent API mode),
+	// where closing the unstarted http.Server would not reach them.
+	eventsDone chan struct{}
 
 	clientsMu sync.Mutex
 	clients   map[chan sseEvent]struct{}
@@ -229,34 +233,27 @@ func WithReformulator(fn ReformulateFunc, meta RespondMeta) Option {
 	}
 }
 
-// New creates a new Server that will listen on the given address.
-// If addr is empty it defaults to "127.0.0.1:0" (random available port).
-func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, error) {
-	if addr == "" {
-		addr = "127.0.0.1:0"
-	}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w", addr, err)
-	}
-
+// NewHandler builds a fully-routed Server without opening a listener, so its
+// Handler can be mounted under a path prefix on an outer mux (used by the
+// multi-session agent API). The returned Server cannot serve directly: Start,
+// Serve, Addr, and URL are inert without a listener. Construct
+// listener-backed servers with New instead.
+func NewHandler(assets Assets, data PageData, opts ...Option) (*Server, error) {
 	data.ensureAssets(assets)
 
 	tmpl, err := template.New("index").Parse(assets.IndexHTML)
 	if err != nil {
-		ln.Close()
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
 
 	mux := http.NewServeMux()
 
 	s := &Server{
-		listener:  ln,
-		pageData:  data,
-		tmpl:      tmpl,
-		clients:   make(map[chan sseEvent]struct{}),
-		serveDone: make(chan struct{}),
+		pageData:   data,
+		tmpl:       tmpl,
+		clients:    make(map[chan sseEvent]struct{}),
+		serveDone:  make(chan struct{}),
+		eventsDone: make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -307,18 +304,58 @@ func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, er
 	return s, nil
 }
 
-// Addr returns the actual listening address (useful when port 0 was requested).
+// New creates a new Server that will listen on the given address.
+// If addr is empty it defaults to "127.0.0.1:0" (random available port).
+func New(addr string, assets Assets, data PageData, opts ...Option) (*Server, error) {
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen on %s: %w", addr, err)
+	}
+
+	s, err := NewHandler(assets, data, opts...)
+	if err != nil {
+		ln.Close()
+		return nil, err
+	}
+	s.listener = ln
+	return s, nil
+}
+
+// Handler returns the server's routed HTTP handler. It is stable for the
+// lifetime of the Server and can be mounted under a path prefix on an outer
+// mux, which is how the multi-session agent API embeds per-session viewers.
+func (s *Server) Handler() http.Handler {
+	return s.handler
+}
+
+// Addr returns the actual listening address (useful when port 0 was requested),
+// or an empty string for a handler-only Server built with NewHandler.
 func (s *Server) Addr() string {
+	if s.listener == nil {
+		return ""
+	}
 	return s.listener.Addr().String()
 }
 
-// URL returns the http:// URL for the viewer.
+// URL returns the http:// URL for the viewer, or an empty string for a
+// handler-only Server built with NewHandler.
 func (s *Server) URL() string {
+	if s.listener == nil {
+		return ""
+	}
 	return fmt.Sprintf("http://%s/", s.Addr())
 }
 
-// Start begins serving HTTP requests in a new goroutine.
+// Start begins serving HTTP requests in a new goroutine. It is a no-op for
+// handler-only servers built with NewHandler.
 func (s *Server) Start() {
+	if s.listener == nil {
+		return
+	}
 	s.lifecycleMu.Lock()
 	if s.started || s.closed {
 		s.lifecycleMu.Unlock()
@@ -337,6 +374,9 @@ func (s *Server) Start() {
 // Serve serves HTTP requests on the listener. It blocks until the server
 // encounters an error (including http.ErrServerClosed).
 func (s *Server) Serve() error {
+	if s.listener == nil {
+		return errors.New("server has no listener; construct with New")
+	}
 	s.lifecycleMu.Lock()
 	if s.closed {
 		s.lifecycleMu.Unlock()
@@ -365,6 +405,7 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	started := s.started
+	close(s.eventsDone)
 	s.lifecycleMu.Unlock()
 
 	// http.Server.Close also closes active connections, including SSE clients.
@@ -412,6 +453,26 @@ func (s *Server) BroadcastPatches(content template.HTML, ops []document.PatchOp)
 	}
 
 	s.broadcast(sseEvent{name: sseEventPatch, data: string(payload)})
+	return nil
+}
+
+// sessionStatePayload is the body of the "session" SSE event. It tells the
+// page about lifecycle changes (submission acknowledged, stream completed)
+// without leaking review content.
+type sessionStatePayload struct {
+	State     string `json:"state"`
+	Streaming bool   `json:"streaming"`
+}
+
+// BroadcastSessionState sends a "session" SSE event so connected pages can
+// reflect lifecycle changes such as a completed stream or an acknowledged
+// submission.
+func (s *Server) BroadcastSessionState(state string, streaming bool) error {
+	payload, err := json.Marshal(sessionStatePayload{State: state, Streaming: streaming})
+	if err != nil {
+		return fmt.Errorf("marshal session state payload: %w", err)
+	}
+	s.broadcast(sseEvent{name: "session", data: string(payload)})
 	return nil
 }
 
@@ -472,6 +533,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.eventsDone:
 			return
 		case event := <-ch:
 			writeSSE(w, event)
@@ -720,6 +783,10 @@ func (s *Server) authorizeAnnotationMutation(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusConflict, "session is no longer open")
 		return false
 	}
+	if s.review.IsStreaming() {
+		writeAPIError(w, http.StatusConflict, "document still streaming")
+		return false
+	}
 	return true
 }
 
@@ -897,6 +964,8 @@ func writeAnnotationMutationError(w http.ResponseWriter, err error) {
 		writeAPIError(w, http.StatusNotFound, "annotation not found")
 	case errors.Is(err, session.ErrTerminalSessionMutation):
 		writeAPIError(w, http.StatusConflict, "session is no longer open")
+	case errors.Is(err, session.ErrSessionStreaming):
+		writeAPIError(w, http.StatusConflict, "document still streaming")
 	case errors.Is(err, session.ErrInvalidAnnotation):
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, session.ErrAnnotationExists):
@@ -931,6 +1000,10 @@ func (s *Server) handleSessionSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.review.TokenMatches(r.Header.Get(SessionTokenHeader)) {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if s.review.IsStreaming() {
+		http.Error(w, "document still streaming", http.StatusConflict)
 		return
 	}
 
@@ -970,13 +1043,18 @@ func (s *Server) handleSessionSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.review.Submit(*req.Verdict, *req.Summary); err != nil {
-		if errors.Is(err, session.ErrInvalidTransition) {
+		switch {
+		case errors.Is(err, session.ErrInvalidTransition):
 			http.Error(w, "session is no longer open", http.StatusConflict)
-			return
+		case errors.Is(err, session.ErrSessionStreaming):
+			http.Error(w, "document still streaming", http.StatusConflict)
+		default:
+			http.Error(w, "could not submit session", http.StatusInternalServerError)
 		}
-		http.Error(w, "could not submit session", http.StatusInternalServerError)
 		return
 	}
+	// Best-effort lifecycle notification for connected pages.
+	_ = s.BroadcastSessionState(string(session.Submitted), false)
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]string{"state": string(session.Submitted)})

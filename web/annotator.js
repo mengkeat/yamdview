@@ -254,7 +254,7 @@
     function copyItem(item) { var copy = {}; for (var key in item) if (Object.prototype.hasOwnProperty.call(item, key)) copy[key] = item[key]; return copy; }
 
     function deleteItems(items) {
-      for (var i = 0; i < items.length; i++) if (items[i].id) api("/api/session/annotations/" + encodeURIComponent(items[i].id), "DELETE", token).catch(function () {});
+      for (var i = 0; i < items.length; i++) if (items[i].id) api("api/session/annotations/" + encodeURIComponent(items[i].id), "DELETE", token).catch(function () {});
     }
     function openEditor(group) {
       hideAdd();
@@ -316,12 +316,12 @@
       if (saving) { saveAgain = true; return; }
       saving = true; setStatus("Saving…", "");
       var request;
-      if (!current.items.length) request = api("/api/session/annotations", "POST", token, payloadForCreate(current)).then(function (created) {
+      if (!current.items.length) request = api("api/session/annotations", "POST", token, payloadForCreate(current)).then(function (created) {
         var items = Array.isArray(created) ? created : [created];
         if (draft !== current || current.cancelled) { if (current.isNew) deleteItems(items); return; }
         current.items = items; syncDraft();
       });
-      else request = Promise.all(current.items.map(function (item) { return api("/api/session/annotations/" + encodeURIComponent(item.id), "PATCH", token, patchPayload(current)); })).then(function (updated) {
+      else request = Promise.all(current.items.map(function (item) { return api("api/session/annotations/" + encodeURIComponent(item.id), "PATCH", token, patchPayload(current)); })).then(function (updated) {
         if (draft !== current || current.cancelled) return;
         current.items = updated; syncDraft();
       });
@@ -332,7 +332,7 @@
     }
     function deleteGroup(group) {
       if (terminal || !window.confirm("Delete this annotation?")) return;
-      Promise.all(group.items.map(function (item) { return api("/api/session/annotations/" + encodeURIComponent(item.id), "DELETE", token); })).then(function () {
+      Promise.all(group.items.map(function (item) { return api("api/session/annotations/" + encodeURIComponent(item.id), "DELETE", token); })).then(function () {
         annotations = annotations.filter(function (a) { return group.items.indexOf(a) < 0; }); renderList(); renderHighlights();
       }).catch(function (err) { setStatus(err.message || "Could not delete annotation.", "error"); });
     }
@@ -380,7 +380,7 @@
       return items;
     }
     function reloadAnnotations() {
-      return api("/api/session", "GET", "").then(function (metadata) {
+      return api("api/session", "GET", "").then(function (metadata) {
         if (metadata.state && metadata.state !== "open") setTerminal("This review is closed; annotations are read-only.");
         annotations = preserveDraftEdits(Array.isArray(metadata.annotations) ? metadata.annotations : []);
         renderList(); renderHighlights();

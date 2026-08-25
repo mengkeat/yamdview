@@ -38,6 +38,11 @@ const (
 // submitted, timed out, or cancelled.
 var ErrInvalidTransition = errors.New("invalid session transition")
 
+// ErrSessionStreaming is returned when an annotation mutation or submission
+// is attempted while the session's document is still being streamed by an
+// agent. UpdateSnapshot stays available so the stream itself can continue.
+var ErrSessionStreaming = errors.New("document still streaming")
+
 // Errors returned by annotation operations.
 var (
 	ErrInvalidAnnotation       = errors.New("invalid annotation")
@@ -90,6 +95,10 @@ type Session struct {
 	annotations  []annotation.Annotation
 	reformulated *feedback.Reformulated
 	done         chan struct{}
+	// streaming records that an agent is still appending document content.
+	// Annotation mutations and submissions stay locked while it is set; it is
+	// guarded by mu.
+	streaming bool
 }
 
 // Metadata returns a concurrency-safe copy of the session state suitable for
@@ -145,6 +154,37 @@ func New(id, title, prompt string, choices []string, source []byte, snapshot doc
 // NewSession is an explicit alias for New.
 func NewSession(id, title, prompt string, choices []string, source []byte, snapshot document.DocumentSnapshot) (*Session, error) {
 	return New(id, title, prompt, choices, source, snapshot)
+}
+
+// NewStreaming creates a session whose document is still being streamed by
+// an agent: annotation mutations and submissions return ErrSessionStreaming
+// until MarkComplete clears the flag. Document updates via UpdateSnapshot
+// remain available so the stream can keep flowing.
+func NewStreaming(id, title, prompt string, choices []string, source []byte, snapshot document.DocumentSnapshot) (*Session, error) {
+	s, err := New(id, title, prompt, choices, source, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.streaming = true
+	s.mu.Unlock()
+	return s, nil
+}
+
+// MarkComplete unlocks annotation mutations and submissions for a streaming
+// session. It is safe to call on any session, in any state, and is idempotent.
+func (s *Session) MarkComplete() {
+	s.mu.Lock()
+	s.streaming = false
+	s.mu.Unlock()
+}
+
+// IsStreaming reports whether the session's document is still being streamed
+// and therefore annotation mutations and submissions are locked.
+func (s *Session) IsStreaming() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.streaming
 }
 
 // NewWithAnnotations creates a session and adds the supplied annotations using
@@ -248,7 +288,7 @@ func (s *Session) CreateAnnotation(input annotation.Annotation) (annotation.Anno
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.ensureOpen(); err != nil {
+	if err := s.ensureMutable(); err != nil {
 		return annotation.Annotation{}, err
 	}
 	if err := validateAnnotation(input); err != nil {
@@ -287,7 +327,7 @@ func (s *Session) UpdateAnnotation(id string, input annotation.Annotation) (anno
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.ensureOpen(); err != nil {
+	if err := s.ensureMutable(); err != nil {
 		return annotation.Annotation{}, err
 	}
 	index := -1
@@ -327,7 +367,7 @@ func (s *Session) DeleteAnnotation(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.ensureOpen(); err != nil {
+	if err := s.ensureMutable(); err != nil {
 		return err
 	}
 	for i := range s.annotations {
@@ -363,6 +403,9 @@ func (s *Session) UpdateDocument(source []byte, snapshot document.DocumentSnapsh
 
 // Submit records the review and moves the session to submitted.
 func (s *Session) Submit(verdict, summary string) error {
+	if s.IsStreaming() {
+		return fmt.Errorf("%w: submit after MarkComplete", ErrSessionStreaming)
+	}
 	return s.finish(Submitted, verdict, summary)
 }
 
@@ -427,9 +470,43 @@ func (s *Session) finish(next State, verdict, summary string) error {
 	return nil
 }
 
+// FeedbackPayload builds the versioned feedback payload for this session:
+// metadata, annotations as comments, any stored reformulation, and timing.
+// The payload is a point-in-time copy; later mutations do not alter it.
+func (s *Session) FeedbackPayload() feedback.Payload {
+	metadata := s.Metadata()
+	duration := metadata.SubmittedAt.Sub(metadata.OpenedAt).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	return feedback.Payload{
+		Version:      feedback.CurrentVersion,
+		SessionID:    metadata.ID,
+		Title:        metadata.Title,
+		Prompt:       metadata.Prompt,
+		Verdict:      metadata.Verdict,
+		Summary:      metadata.Summary,
+		Comments:     s.AnnotationSnapshot(),
+		Reformulated: s.ReformulatedResult(),
+		Timing:       feedback.Timing{OpenedAt: metadata.OpenedAt, SubmittedAt: metadata.SubmittedAt, DurationMS: duration},
+	}
+}
+
 func (s *Session) ensureOpen() error {
 	if s.State != Open {
 		return fmt.Errorf("%w: session is %s", ErrTerminalSessionMutation, s.State)
+	}
+	return nil
+}
+
+// ensureMutable guards annotation mutations: the session must be open and its
+// document must no longer be streaming.
+func (s *Session) ensureMutable() error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if s.streaming {
+		return ErrSessionStreaming
 	}
 	return nil
 }

@@ -55,7 +55,7 @@
   function reportErrors(errors) {
     if (!errors || errors.length === 0) return;
 
-    fetch("/client-error", {
+    fetch("client-error", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(errors),
@@ -229,7 +229,7 @@
 
   function refreshFromSnapshot(reason) {
     console.warn("yamdview: falling back to snapshot reset", reason || "");
-    fetch("/snapshot")
+    fetch("snapshot")
       .then(function (response) { return response.text(); })
       .then(replaceDocument)
       .catch(function (err) {
@@ -340,7 +340,7 @@
       return;
     }
 
-    var source = new EventSource("/events");
+    var source = new EventSource("events");
     source.addEventListener("reset", handleReset);
     source.addEventListener("patch", handlePatch);
   }
@@ -392,7 +392,7 @@
       for (var k = 0; k < choices.length; k++) choices[k].disabled = true;
       setStatus("Submitting…", "");
 
-      fetch("/api/session/submit", {
+      fetch("api/session/submit", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -526,7 +526,7 @@
       run.disabled = true;
       setReformulateStatus("Drafting consolidated instruction…", "");
 
-      fetch("/api/session/reformulate", {
+      fetch("api/session/reformulate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
