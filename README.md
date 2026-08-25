@@ -30,6 +30,7 @@
   - [Flags](#flags)
   - [Standalone HTML export](#standalone-html-export)
   - [Fixed-viewport export](#fixed-viewport-export)
+  - [Agent integration](#agent-integration)
 - [Math Support](#math-support)
   - [Explicit TeX notation](#explicit-tex-notation)
   - [Unicode math heuristic conversion](#unicode-math-heuristic-conversion)
@@ -155,6 +156,18 @@ When testing rendering output programmatically, export to a temp file &mdash; mu
 yamdview --export /tmp/preview.html README.md
 grep 'data-tex=' /tmp/preview.html   # check KaTeX elements
 ```
+
+### Agent integration
+
+yamdview doubles as a human-in-the-loop review surface for coding agents:
+the agent presents Markdown, the user highlights and comments in the browser,
+and structured feedback (verdict, summary, exact quotes with line ranges)
+flows back. Three tiers are available — the blocking `yamdview review` CLI
+(zero dependencies, JSON payload on stdout), a long-running multi-session
+HTTP API (`yamdview serve --api`), and an MCP stdio server (`yamdview mcp`).
+See [docs/agent-integration.md](docs/agent-integration.md) for the full
+contracts, ready-to-paste tool schemas, and a scripted round-trip example in
+[examples/](examples/).
 
 ## Math Support
 
