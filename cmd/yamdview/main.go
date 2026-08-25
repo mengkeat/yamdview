@@ -62,6 +62,14 @@ func main() {
 		return
 	}
 
+	if cfg.Mode == cli.ModeMCP {
+		if err := application.RunMCP(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := application.RunViewer(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

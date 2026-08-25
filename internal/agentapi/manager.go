@@ -314,8 +314,10 @@ func (m *Manager) lookup(id string) (*managedSession, bool) {
 	return ms, ok
 }
 
-// ids returns a snapshot of the live session IDs, for cleanup and listing.
-func (m *Manager) ids() []string {
+// IDs returns a snapshot of the live session IDs. It is used internally for
+// shutdown cleanup and by in-process integrations (and their tests) that
+// need to discover sessions created through the Manager.
+func (m *Manager) IDs() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	ids := make([]string, 0, len(m.sessions))

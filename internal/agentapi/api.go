@@ -148,7 +148,7 @@ func (s *Server) Close() error {
 		<-s.serveDone
 	}
 
-	for _, id := range s.manager.ids() {
+	for _, id := range s.manager.IDs() {
 		_ = s.manager.Delete(id)
 	}
 	return err

@@ -27,6 +27,7 @@ import (
 	"github.com/mengkeat/yamdview/internal/llm"
 	"github.com/mengkeat/yamdview/internal/llmapp"
 	"github.com/mengkeat/yamdview/internal/markdown"
+	"github.com/mengkeat/yamdview/internal/mcp"
 	"github.com/mengkeat/yamdview/internal/server"
 	"github.com/mengkeat/yamdview/internal/session"
 	"github.com/mengkeat/yamdview/internal/watcher"
@@ -40,9 +41,11 @@ const (
 	ModeView   Mode = "view"
 	ModeReview Mode = "review"
 	ModeServe  Mode = "serve"
+	ModeMCP    Mode = "mcp"
 
-	// ServeMode is a descriptive alias for the canonical mode name.
+	// ServeMode and MCPMode are descriptive aliases for the canonical mode names.
 	ServeMode = ModeServe
+	MCPMode   = ModeMCP
 )
 
 // ReviewConfig contains options specific to a blocking review session.
@@ -247,6 +250,9 @@ func (a *App) Run() error {
 	if a.cfg.Mode == ModeServe {
 		return a.RunServeAPI()
 	}
+	if a.cfg.Mode == ModeMCP {
+		return a.RunMCP()
+	}
 	if a.cfg.Mode == ModeReview {
 		status, err := a.RunReview()
 		if err != nil {
@@ -288,6 +294,40 @@ func (a *App) RunServeAPI() error {
 	<-ctx.Done()
 	log.Println("api: shutting down")
 	return srv.Close()
+}
+
+// RunMCP runs the MCP stdio server (`yamdview mcp`) until stdin reaches EOF
+// or the context is cancelled (SIGINT/SIGTERM or Config.Context). The
+// protocol travels over Config.Input/Config.Output, defaulting to
+// os.Stdin/os.Stdout; logs, including the agent API bearer token, go to
+// stderr only - stdout is protocol-exclusive. Loopback enforcement happens
+// in the CLI layer; RunMCP trusts Config.Addr.
+func (a *App) RunMCP() error {
+	input := a.cfg.Input
+	if input == nil {
+		input = os.Stdin
+	}
+	output := a.cfg.Output
+	if output == nil {
+		output = os.Stdout
+	}
+	srv, err := mcp.New(a.assets, a.cfg.Addr, input, output)
+	if err != nil {
+		return fmt.Errorf("create mcp server: %w", err)
+	}
+	log.Printf("mcp: session api on %s bearer %s", srv.URL(), srv.Token())
+
+	ctx := a.cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := srv.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 // RunViewer executes the ordinary export or live-viewer flow.
