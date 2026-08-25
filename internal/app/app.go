@@ -18,6 +18,7 @@ import (
 
 	"github.com/yuin/goldmark"
 
+	"github.com/mengkeat/yamdview/internal/agentapi"
 	"github.com/mengkeat/yamdview/internal/annotation"
 	"github.com/mengkeat/yamdview/internal/browser"
 	"github.com/mengkeat/yamdview/internal/document"
@@ -38,6 +39,10 @@ type Mode string
 const (
 	ModeView   Mode = "view"
 	ModeReview Mode = "review"
+	ModeServe  Mode = "serve"
+
+	// ServeMode is a descriptive alias for the canonical mode name.
+	ServeMode = ModeServe
 )
 
 // ReviewConfig contains options specific to a blocking review session.
@@ -76,6 +81,8 @@ type Config struct {
 	MarkdownPath string
 	Addr         string // bind address, e.g. "127.0.0.1:0"
 	NoOpen       bool   // do not open browser
+	API          bool   // serve mode: run the long-running agent HTTP API
+	UnsafeBind   bool   // serve mode: allow non-loopback listen addresses
 	Debounce     time.Duration
 	Export       string // export standalone HTML to this path (empty = serve)
 	ExportView   string // viewport target for export
@@ -237,6 +244,9 @@ func (a *App) repairSnapshot(ctx context.Context, src []byte, snap document.Docu
 
 // Run executes the configured application flow.
 func (a *App) Run() error {
+	if a.cfg.Mode == ModeServe {
+		return a.RunServeAPI()
+	}
 	if a.cfg.Mode == ModeReview {
 		status, err := a.RunReview()
 		if err != nil {
@@ -248,6 +258,36 @@ func (a *App) Run() error {
 		return nil
 	}
 	return a.RunViewer()
+}
+
+// RunServeAPI runs the long-running agent HTTP API (`yamdview serve --api`)
+// and blocks until SIGINT/SIGTERM (or Config.Context cancellation). On
+// startup it logs exactly one parseable line to stderr:
+//
+//	api: listening on http://127.0.0.1:PORT bearer <token>
+//
+// Agents scrape this line for the API base URL and bearer token; the format
+// is a stable contract, do not change it casually. No browser is opened:
+// sessions carry their own viewer URLs. Loopback enforcement happens in the
+// CLI layer; RunServeAPI trusts Config.Addr.
+func (a *App) RunServeAPI() error {
+	srv, err := agentapi.New(a.assets, a.cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("create agent api server: %w", err)
+	}
+	srv.Start()
+	log.Printf("api: listening on %s bearer %s", srv.URL(), srv.Token())
+
+	ctx := a.cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	<-ctx.Done()
+	log.Println("api: shutting down")
+	return srv.Close()
 }
 
 // RunViewer executes the ordinary export or live-viewer flow.

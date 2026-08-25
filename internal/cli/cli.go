@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,10 +26,12 @@ type Mode string
 const (
 	ModeView   Mode = "view"
 	ModeReview Mode = "review"
+	ModeServe  Mode = "serve"
 
 	// ModeViewer and ReviewMode are descriptive aliases for the canonical mode names.
 	ModeViewer = ModeView
 	ReviewMode = ModeReview
+	ServeMode  = ModeServe
 )
 
 // ReviewConfig contains options specific to a review session.
@@ -50,6 +53,8 @@ type Config struct {
 	MarkdownPath string
 	Addr         string // HTTP bind address (host:port)
 	NoOpen       bool   // suppress automatic browser opening
+	API          bool   // serve mode: run the long-running agent HTTP API
+	UnsafeBind   bool   // serve mode: allow non-loopback listen addresses
 	Debounce     time.Duration
 	Export       string // export standalone HTML to this path (empty = serve)
 	ExportView   string // viewport target for export: phone, tablet, laptop, desktop
@@ -68,6 +73,9 @@ func Parse(args []string) (Config, error) {
 			args = args[1:]
 		case string(ModeReview):
 			mode = ModeReview
+			args = args[1:]
+		case string(ModeServe):
+			mode = ModeServe
 			args = args[1:]
 		}
 	}
@@ -109,12 +117,36 @@ func Parse(args []string) (Config, error) {
 		flags.StringVar(&respondProvider, "respond-provider", "", "named LLM provider (from --llm-config) used to reformulate feedback")
 		flags.StringVar(&respondModel, "respond-model", "", "override the model used for feedback reformulation")
 	}
+	var serveAPI, unsafeBind bool
+	if mode == ModeServe {
+		flags.BoolVar(&serveAPI, "api", false, "run the long-running agent HTTP API (sessions are created dynamically)")
+		// The mcp subcommand (Phase 14) will reuse this flag for the same rule.
+		flags.BoolVar(&unsafeBind, "unsafe-bind", false, "allow binding to non-loopback addresses")
+	}
 
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
 
 	remaining := flags.Args()
+	if mode == ModeServe {
+		if len(remaining) != 0 {
+			return Config{}, ErrUsage
+		}
+		if !serveAPI {
+			return Config{}, errors.New("serve requires --api (the long-running agent HTTP API is currently the only serve variant)")
+		}
+		if err := ValidateLoopbackBind(*addr, unsafeBind); err != nil {
+			return Config{}, err
+		}
+		return Config{
+			Mode:       mode,
+			Addr:       *addr,
+			API:        serveAPI,
+			UnsafeBind: unsafeBind,
+			LLM:        llm.Settings{Mode: llm.ModeOff}, // serve mode has no document repair
+		}, nil
+	}
 	if len(remaining) != 1 {
 		return Config{}, ErrUsage
 	}
@@ -244,6 +276,36 @@ func Parse(args []string) (Config, error) {
 			Respond: respond,
 		},
 	}, nil
+}
+
+// ValidateLoopbackBind refuses listen addresses that would expose an
+// authenticated API/MCP surface beyond the local machine. Allowed without
+// --unsafe-bind: "localhost" and literal loopback IPs (127.0.0.0/8, ::1).
+// Everything else is refused, including the empty-host form ":8080" (which
+// binds all interfaces), wildcard addresses, and non-loopback hostnames or
+// IPs. When unsafe is true any address is accepted. It is exported so the
+// upcoming mcp mode can enforce the same rule.
+func ValidateLoopbackBind(addr string, unsafe bool) error {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	if unsafe {
+		return nil
+	}
+	switch {
+	case host == "":
+		return fmt.Errorf("--addr %q binds all interfaces; use a loopback address such as 127.0.0.1 or [::1], or pass --unsafe-bind", addr)
+	case strings.EqualFold(host, "localhost"):
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("--addr %q is not a loopback address; pass --unsafe-bind to allow non-loopback binds", addr)
+	}
+	return fmt.Errorf("--addr %q is a hostname; use \"localhost\", a loopback IP, or pass --unsafe-bind", addr)
 }
 
 func splitChoices(value string) []string {

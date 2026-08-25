@@ -30,6 +30,8 @@ func main() {
 		MarkdownPath: cfg.MarkdownPath,
 		Addr:         cfg.Addr,
 		NoOpen:       cfg.NoOpen,
+		API:          cfg.API,
+		UnsafeBind:   cfg.UnsafeBind,
 		Debounce:     cfg.Debounce,
 		Export:       cfg.Export,
 		ExportView:   cfg.ExportView,
@@ -50,6 +52,14 @@ func main() {
 			os.Exit(app.ReviewInternal.Code())
 		}
 		os.Exit(status.Code())
+	}
+
+	if cfg.Mode == cli.ModeServe {
+		if err := application.RunServeAPI(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	if err := application.RunViewer(); err != nil {
