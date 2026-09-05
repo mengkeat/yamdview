@@ -51,6 +51,7 @@
 - **📐 KaTeX Math** &mdash; Inline (`$...$`), display (`$$...$$`), LaTeX-style (`\(...\)`, `\[...\]`), and fenced `math` blocks &mdash; all rendered with fully vendored KaTeX. Zero network calls.
 - **🔣 Unicode Math Detection** &mdash; Automatically converts LLM-style Unicode equations (`∀x ∈ ℝ, x² ≥ 0`) to rendered TeX at display time. The source file is **not modified unless you opt in** with `--write-fixes`.
 - **📊 Table Repair** &mdash; Heuristically detects and fixes malformed pipe tables (misaligned columns, missing separators, code pipes).
+- **🤖 Agent Review Mode** &mdash; `yamdview review` turns yamdview into a human-in-the-loop agent tool: the user highlights and comments in the browser, and the agent receives structured feedback (verdict, summary, exact quotes with line ranges) on stdout. Also available as a multi-session HTTP API and MCP server. [See below](#agent-integration).
 - **📤 Offline Export** &mdash; Generate self-contained HTML files with inlined CSS, JS, and KaTeX. Open in any browser, no server needed.
 - **🎨 Paper & Ink Theme** &mdash; A warm, distinctive reading environment with Crimson Pro typography, paper-toned backgrounds, and ink-like text colors. [See below](#design--theme).
 - **🔒 Privacy-First** &mdash; Binds to `127.0.0.1` by default. Zero telemetry, zero network requests during preview.
@@ -305,13 +306,23 @@ Linting uses `golangci-lint`, formatting uses `gofumpt` + `goimports`. See [LINT
 yamdview/
 ├── cmd/yamdview/        # main entry point
 ├── internal/
+│   ├── agentapi/        # multi-session HTTP API for agents (serve --api)
+│   ├── annotation/      # highlight anchors and quote-to-source resolution
 │   ├── app/             # application lifecycle orchestration
 │   ├── browser/         # cross-platform browser opening
-│   ├── cli/             # flag parsing and configuration
+│   ├── cli/             # flag parsing, subcommands, configuration
 │   ├── document/        # block segmentation, snapshot, and diff
+│   ├── feedback/        # structured review feedback payload
+│   ├── fixer/           # validated source patching (--write-fixes)
+│   ├── llm/             # LLM providers, prompt templates, validation
+│   ├── llmapp/          # snapshot-driven LLM repair pass
 │   ├── markdown/        # goldmark renderer configuration
+│   ├── mathchars/       # shared Unicode math character tables
 │   ├── mathfix/         # Unicode math detection and TeX conversion
-│   ├── server/          # HTTP server, SSE, and export
+│   ├── mcp/             # MCP stdio server (yamdview mcp)
+│   ├── mdfence/         # fenced code block helpers
+│   ├── server/          # HTTP server, SSE, review sessions, export
+│   ├── session/         # review session lifecycle and tokens
 │   ├── tablefix/        # heuristic table detection and repair
 │   └── watcher/         # file watching with debounce
 ├── web/                 # embedded HTML, CSS, JS, and KaTeX assets
@@ -332,9 +343,14 @@ yamdview/
 | 5 | Unicode math heuristic conversion | ✅ Complete |
 | 6 | Table heuristic detection and repair | ✅ Complete |
 | 7 | Safe fix persistence (`--write-fixes`) | ✅ Complete |
-| 8 | LLM provider abstraction and fallback | Planned |
-| 9 | UX, performance, and polish | Planned |
-| 10 | Packaging and documentation | In progress |
+| 8 | LLM provider abstraction and fallback | ✅ Complete |
+| 9 | UX, performance, and polish | ✅ Complete |
+| 10 | Packaging and documentation | 🔄 In progress |
+| 11 | Review session foundation (`yamdview review`) | ✅ Complete |
+| 12 | Highlight-and-comment annotations | ✅ Complete |
+| 13 | Feedback reformulation via configurable LLM | ✅ Complete |
+| 14 | Agent HTTP API (`serve --api`) + MCP server (`mcp`) | ✅ Complete |
+| 15 | Rich agent content (Mermaid, highlighting, images) | Planned |
 
 ## Privacy & Safety
 
@@ -343,7 +359,7 @@ YAMDView is designed to be safe by default:
 - **Local-only server** &mdash; binds to `127.0.0.1` by default. Remote access requires an explicit `--addr` flag.
 - **No telemetry** &mdash; the binary makes zero outbound network requests during normal operation (fonts are loaded by the *browser*, not the binary).
 - **Opt-in modifications** &mdash; Unicode math conversion and table repair are render-only. The source file is never modified unless you explicitly opt in via `--write-fixes=backup` or `--write-fixes=in-place`. The default is `never`.
-- **LLM provider opt-in** &mdash; Future LLM-based repair features will require explicit user approval before any source text is sent to a provider.
+- **LLM provider opt-in** &mdash; Optional LLM repair and feedback reformulation run only when explicitly configured (`--llm` / `--respond-llm`). Provider output must pass deterministic local validation before it affects rendering, and LLM suggestions are never written to source files.
 
 ## Contributing
 
